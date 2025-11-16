@@ -1,21 +1,35 @@
 from trading_strategy import TradingStrategy
+from timeframes import TimeframesEnum
+from market_data import MarketData
+from position_data import PositionData
+from signals import TradingSignalEnum, TradingSignal
 
 class EarlyLossTaker(TradingStrategy):
+    """Trading rule that exits trades early if a predefined loss threshold is met.
+
+    The idea of this strategy is to minimize losses by exiting a trade when the price drops
+    """
+    def __init__(self, short_window=5, long_window=20, timeframe=TimeframesEnum.ONE_HOUR):
+        self.short_window = short_window
+        self.long_window = long_window
+        self.timeframe = timeframe
+        self.loss_threshold = 0.02  # 2% loss threshold
+
+    def generate_signal(self, market_data: MarketData, positions_data: PositionData) -> TradingSignal:
+        
+        short_return = self.__get_short_return(market_data)
+        long_return = self.__get_long_return(market_data)
+
+        if long_return < short_return:
+            return TradingSignalEnum.BUY
+        elif long_return > short_return:
+            return TradingSignalEnum.SELL
+        else:
+            return TradingSignalEnum.HOLD
     
-    def __init__(self):
+    def __get_short_return(self, market_data):
         pass
 
-    def generate_signal(self, market_data, positions_data):
-        return super().generate_signal(market_data, positions_data)
-       
-
-    def should_exit_trade(self, entry_price: float, current_price: float) -> bool:
-        """
-        Determine whether to exit the trade based on the current price and entry price.
-
-        :param entry_price: The price at which the trade was entered.
-        :param current_price: The current market price of the asset.
-        :return: True if the trade should be exited, False otherwise.
-        """
-        loss = (entry_price - current_price) / entry_price
-        return loss >= self.loss_threshold
+    def __get_long_return(self, market_data):
+        pass
+    
