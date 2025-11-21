@@ -1,35 +1,42 @@
+
+from signals import TradingSignal, TradingSignalEnum
 from trading_strategy import TradingStrategy
 from timeframes import TimeframesEnum
 from market_data import MarketData
 from position_data import PositionData
-from signals import TradingSignalEnum, TradingSignal
+
+DEFAULT_THRESHOLD = 0.02  # 2% loss threshold
+DESCRIPTION = """Trading rule that exits trades early if a predefined loss threshold is met.\n
+                 The idea of this strategy is to minimize losses by exiting a trade when the price drops.
+              """
 
 class EarlyLossTaker(TradingStrategy):
-    """Trading rule that exits trades early if a predefined loss threshold is met.
 
-    The idea of this strategy is to minimize losses by exiting a trade when the price drops
-    """
-    def __init__(self, short_window=5, long_window=20, timeframe=TimeframesEnum.ONE_HOUR):
-        self.short_window = short_window
-        self.long_window = long_window
+    def __init__(self, loss_threshold=DEFAULT_THRESHOLD, timeframe=TimeframesEnum.ONE_HOUR, max_bars=5):
         self.timeframe = timeframe
-        self.loss_threshold = 0.02  # 2% loss threshold
+        self.loss_threshold = loss_threshold
+        self.description = DESCRIPTION
 
     def generate_signal(self, market_data: MarketData, positions_data: PositionData) -> TradingSignal:
         
-        short_return = self.__get_short_return(market_data)
-        long_return = self.__get_long_return(market_data)
+        if positions_data.are_we_holding_positions():
+            # look for sell signals
+            
+            position_entry_point = positions_data[0].get_entry_price()
+            latest_price = market_data.get_latest_price()
+            loss_percentage = (position_entry_point - latest_price) / position_entry_point
+            
+            # If there is loss beyond the threshold, signal to sell
+            if loss_percentage >= self.loss_threshold:
+                return TradingSignalEnum.SELL
 
-        if long_return < short_return:
-            return TradingSignalEnum.BUY
-        elif long_return > short_return:
-            return TradingSignalEnum.SELL
         else:
+    
+            print("No open positions to evaluate for early loss taker.")
             return TradingSignalEnum.HOLD
-    
-    def __get_short_return(self, market_data):
-        pass
+            
 
-    def __get_long_return(self, market_data):
-        pass
-    
+
+
+            
+           
