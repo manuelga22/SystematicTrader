@@ -1,8 +1,10 @@
 import pandas as pd
 from trading_rules import early_loss_taker, early_profit_taker,\
-                         mean_reversal, market_data, position_data
+                         mean_reversal, market_data, position_data,\
+                         loss_profit_taker
 from trading_rules.signals import TradingSignalEnum
 
+print('hello')
 if __name__ == "__main__":
     print("This is a trading rules tester module.")
     
@@ -89,8 +91,41 @@ if __name__ == "__main__":
     
     assert early_loss.generate_signal(market, positions).value == TradingSignalEnum.NONE.value
 
+
+    ################################
+    ### TESTING LOSS PROFIT TAKER ##
+    ################################
+    loss_profit = loss_profit_taker.LossProfitTaker(loss_threshold=0.02, won_threshold=0.02)
+
+    apple_data = pd.DataFrame()
+    apple_data['price'] = [100, 102]
+    market = market_data.MarketData(apple_data)
+    assert loss_profit.generate_signal(market, positions).value == TradingSignalEnum.SELL.value
+
+    apple_data = pd.DataFrame()
+    apple_data['price'] = [100, 98]
+    market = market_data.MarketData(apple_data)
+    assert loss_profit.generate_signal(market, positions).value == TradingSignalEnum.SELL.value
+
+    apple_data = pd.DataFrame()
+    apple_data['price'] = [100, 99]
+    market = market_data.MarketData(apple_data)
+    assert loss_profit.generate_signal(market, positions).value == TradingSignalEnum.NONE.value
+
     ################################
     ### TESTING MEAN REVERSAL    ###
     ################################
 
-    mean_reversal = mean_reversal.MeanReversal()
+    mean_rev = mean_reversal.MeanReversal(short_window=2, long_window=5)
+    
+    apple_data = pd.DataFrame()
+    apple_data['price'] = [100, 100, 100, 100, 50] # Short mean (75) < Long mean (90) -> BUY signal
+    market = market_data.MarketData(apple_data)
+    
+    assert mean_rev.generate_signal(market, position_data.Positions(cash=cash_position)).value == TradingSignalEnum.BUY.value
+
+    apple_data = pd.DataFrame()
+    apple_data['price'] = [100, 100, 100, 100, 100] # Short mean (100) < Long mean (100) -> No Signal
+    market = market_data.MarketData(apple_data)   
+
+    assert mean_rev.generate_signal(market, position_data.Positions(cash=cash_position)).value == TradingSignalEnum.NONE.value

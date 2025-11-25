@@ -9,10 +9,9 @@ class MeanReversal(TradingStrategy):
                      The idea of this strategy is to buy when the price is significantly below the moving average and sell when it is above.
                   """
     
-    def __init__(self, short_window=5, long_window=20, timeframe=TimeframesEnum.ONE_HOUR):
+    def __init__(self, short_window=5, long_window=20):
         self.short_window = short_window
         self.long_window = long_window
-        self.timeframe = timeframe
 
     def generate_signal(self, market_data: MarketData, positions_data: PositionData) -> TradingSignal:
 
@@ -25,6 +24,11 @@ class MeanReversal(TradingStrategy):
             # If short mean is below long mean, signal to buy (we expect price to revert to the mean)
             if short_mean < long_mean:
                 return TradingSignalEnum.BUY
+            else:
+                return TradingSignalEnum.NONE
+        else:
+            print("We are holding positions, checking for sell signals...")
+            return TradingSignalEnum.NONE
         
 
     def get_long_mean(self, market_data):
