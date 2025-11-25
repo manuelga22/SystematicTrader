@@ -18,6 +18,7 @@ class MeanReversalShield():
         self.profit_threshold = profit_threshold
         self.long_window = long_window
         self.short_window = short_window
+        self.description = DESCRIPTION
 
         self.buy_rule = mean_reversal.MeanReversal(short_window=self.short_window,
                                                   long_window=self.long_window)
