@@ -1,6 +1,7 @@
 from trading_rules import mean_reversal, loss_profit_taker
 from trading_rules.position_data import Positions
 from trading_rules.market_data import MarketData
+from trading_rules.signals import TradingSignalEnum
 
 DEFAULT_THRESHOLD = 0.02  # 2%
 DESCRIPTION = """
@@ -25,7 +26,7 @@ class MeanReversalShield():
         self.sell_rule = loss_profit_taker.LossProfitTaker(loss_threshold=self.loss_threshold,
                                                        profit_threshold=self.profit_threshold)
 
-    def generate_signals(self, user_positions: Positions, market_data: MarketData):
+    def generate_signals(self, user_positions: Positions, market_data: MarketData) -> TradingSignalEnum:
 
         if user_positions.are_we_holding_positions():
 
