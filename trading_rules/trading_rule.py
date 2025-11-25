@@ -3,7 +3,7 @@ from market_data import MarketData
 from position_data import PositionData
 from signals import TradingSignal
 
-class TradingStrategy:
+class TradingRule:
     """Base class for trading strategies."""
     def __init__(self):
         pass

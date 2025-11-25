@@ -1,6 +1,6 @@
 
 from signals import TradingSignal, TradingSignalEnum
-from trading_strategy import TradingStrategy
+from trading_rules.trading_rule import TradingRule
 from timeframes import TimeframesEnum
 from market_data import MarketData
 from position_data import Positions
@@ -10,7 +10,7 @@ DESCRIPTION = """Trading rule that exits trades early if a predefined profit thr
                  The idea of this strategy is to minimize losses by exiting a trade when the price drops.
               """
 
-class EarlyProfitTaker(TradingStrategy):
+class EarlyProfitTaker(TradingRule):
 
     def __init__(self, profit_threshold=DEFAULT_THRESHOLD):
         self.profit_threshold = profit_threshold  # 2% profit threshold

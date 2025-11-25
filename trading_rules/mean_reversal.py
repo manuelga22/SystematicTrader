@@ -1,10 +1,10 @@
-from trading_strategy import TradingStrategy
+from trading_rules.trading_rule import TradingRule
 from timeframes import TimeframesEnum
 from market_data import MarketData
 from position_data import PositionData
 from signals import TradingSignalEnum, TradingSignal
 
-class MeanReversal(TradingStrategy):
+class MeanReversal(TradingRule):
     DESCRIPTION = """Trading rule that identifies mean reversion opportunities based on price deviations from a moving average.\n
                      The idea of this strategy is to buy when the price is significantly below the moving average and sell when it is above.
                   """
