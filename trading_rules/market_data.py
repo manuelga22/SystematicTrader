@@ -6,9 +6,9 @@ class MarketData:
     """
     A class to represent market data in dataframe format.
     """
-    def __init__(self, **kwargs):
-        self.df = pd.DataFrame(kwargs)
-        self.columns = kwargs.keys()
+    def __init__(self, df: pd.DataFrame):
+        self.df = df
+        self.columns = df.columns.tolist()
 
     def get_latest_price(self):
         return self.df[PRICE].iloc[-1]

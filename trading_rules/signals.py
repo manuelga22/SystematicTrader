@@ -1,9 +1,10 @@
 from enum import Enum
 
 class TradingSignalEnum(Enum):
-    BUY = 1
-    HOLD = 0
-    SELL = -1
+    BUY = "BUY"
+    HOLD = "HOLD"
+    SELL = "SELL"
+    NONE = "NONE"
 
     def __str__(self):
         return self.name
