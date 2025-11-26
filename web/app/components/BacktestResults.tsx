@@ -170,10 +170,10 @@ export default function BacktestResults({ results, isLoading }: BacktestResultsP
                     <TableCell className="text-right">{trade.quantity}</TableCell>
                     <TableCell
                       className={`text-right font-medium ${
-                        (trade.pnl || 0) >= 0 ? 'text-green-500' : 'text-red-500'
+                        (trade.pnl ?? 0) >= 0 ? 'text-green-500' : 'text-red-500'
                       }`}
                     >
-                      {trade.pnl !== undefined
+                      {trade.pnl != null
                         ? `${trade.pnl >= 0 ? '+' : ''}$${trade.pnl.toFixed(2)}`
                         : '-'}
                     </TableCell>
