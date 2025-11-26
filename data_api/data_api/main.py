@@ -21,16 +21,26 @@ app.add_middleware(
 )
 
 # ---- Pydantic Models for Backtest ----
+class RuleParams(BaseModel):
+    """Parameters for Python trading rules"""
+    shortWindow: Optional[int] = 5
+    longWindow: Optional[int] = 20
+    profitThreshold: Optional[float] = 0.02
+    lossThreshold: Optional[float] = 0.02
+
 class TradingRuleConfig(BaseModel):
     id: str
     name: str
     ruleType: str
     timeframe: str
-    changeType: Literal["price_increase", "price_decrease", "volume_increase", "volume_decrease"]
-    changePercent: float
+    changeType: Optional[Literal["price_increase", "price_decrease", "volume_increase", "volume_decrease"]] = None
+    changePercent: Optional[float] = None
     decision: Literal["BUY", "SELL"]
     quantity: int
     enabled: bool
+    # New fields for Python trading rules
+    pythonRuleType: Optional[str] = None  # mean_reversal, early_profit_taker, etc.
+    params: Optional[RuleParams] = None
 
 class BacktestRequest(BaseModel):
     stocks: List[str]
@@ -38,6 +48,7 @@ class BacktestRequest(BaseModel):
     endDate: str
     initialCapital: float
     rules: List[TradingRuleConfig]
+    quantityPerTrade: Optional[int] = 100
 
 class Trade(BaseModel):
     id: str
@@ -217,228 +228,85 @@ def indicators(
 
 # ---- Backtest Endpoint ----
 
-def _get_yf_interval(timeframe: str) -> str:
-    """Map frontend timeframe to yfinance interval."""
-    mapping = {
-        "1Min": "1m",
-        "5Min": "5m",
-        "15Min": "15m",
-        "30Min": "30m",
-        "1H": "1h",
-        "4H": "1h",  # yfinance doesn't have 4h, use 1h
-        "1D": "1d",
-        "1W": "1wk",
-    }
-    return mapping.get(timeframe, "1d")
-
-
 @app.post("/backtest", response_model=BacktestResponse)
-def run_backtest(config: BacktestRequest):
+def run_backtest_endpoint(config: BacktestRequest):
     """
     Run a backtest with the given configuration using real market data.
+    Supports both simple rules and Python trading_rules module.
     """
+    from .backtest_service import run_backtest, TradeRecord
+
     stocks = config.stocks
     start_date = config.startDate
     end_date = config.endDate
     initial_capital = config.initialCapital
-    rules = [r for r in config.rules if r.enabled]
+    quantity_per_trade = config.quantityPerTrade or 100
+
+    # Convert Pydantic models to dicts for the service
+    rules = []
+    for r in config.rules:
+        rule_dict = {
+            "id": r.id,
+            "name": r.name,
+            "ruleType": r.ruleType,
+            "timeframe": r.timeframe,
+            "changeType": r.changeType,
+            "changePercent": r.changePercent,
+            "decision": r.decision,
+            "quantity": r.quantity,
+            "enabled": r.enabled,
+            "pythonRuleType": r.pythonRuleType,
+            "params": r.params.model_dump() if r.params else None
+        }
+        rules.append(rule_dict)
 
     if not stocks:
         raise HTTPException(status_code=400, detail="No stocks selected")
     if not rules:
+        raise HTTPException(status_code=400, detail="No rules configured")
+
+    enabled_rules = [r for r in rules if r.get("enabled", True)]
+    if not enabled_rules:
         raise HTTPException(status_code=400, detail="No rules enabled")
 
-    buy_rules = [r for r in rules if r.decision == "BUY"]
-    sell_rules = [r for r in rules if r.decision == "SELL"]
+    try:
+        result = run_backtest(
+            stocks=stocks,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=initial_capital,
+            rules=enabled_rules,
+            quantity_per_trade=quantity_per_trade
+        )
 
-    # Determine interval from rules (use the smallest timeframe)
-    timeframes = [r.timeframe for r in rules]
-    interval = _get_yf_interval(min(timeframes, key=lambda x: {
-        "1Min": 1, "5Min": 5, "15Min": 15, "30Min": 30,
-        "1H": 60, "4H": 240, "1D": 1440, "1W": 10080
-    }.get(x, 1440)))
+        # Convert TradeRecord objects to Trade dicts
+        trades = []
+        for t in result.trades:
+            trades.append({
+                "id": t.id,
+                "timestamp": t.timestamp,
+                "stock": t.stock,
+                "decision": t.decision,
+                "price": t.price,
+                "quantity": t.quantity,
+                "ruleTriggered": t.rule_triggered,
+                "pnl": t.pnl
+            })
 
-    # Fetch price data for all stocks
-    stock_data: Dict[str, pd.DataFrame] = {}
-    for stock in stocks:
-        try:
-            df = yf.download(stock, start=start_date, end=end_date, interval=interval, auto_adjust=False, progress=False)
-            if df is None or df.empty:
-                continue
-            # Flatten multi-index columns if present
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-            df = df.reset_index()
-            df = df.rename(columns={"Date": "timestamp", "Datetime": "timestamp"})
-            df = df.sort_values("timestamp").reset_index(drop=True)
-            stock_data[stock] = df
-        except Exception as e:
-            print(f"Error fetching {stock}: {e}")
-            continue
+        return BacktestResponse(
+            totalTrades=result.total_trades,
+            winningTrades=result.winning_trades,
+            losingTrades=result.losing_trades,
+            totalPnL=result.total_pnl,
+            percentReturn=result.percent_return,
+            maxDrawdown=result.max_drawdown,
+            trades=trades,
+            portfolioValue=result.portfolio_values,
+            timestamps=result.timestamps,
+        )
 
-    if not stock_data:
-        raise HTTPException(status_code=404, detail="No price data available for the selected stocks and date range")
-
-    # Initialize tracking
-    trades: List[Trade] = []
-    cash = initial_capital
-    positions: Dict[str, dict] = {}  # {stock: {entry_price, quantity, entry_timestamp}}
-    portfolio_values: List[float] = [initial_capital]
-    timestamps: List[str] = [start_date]
-
-    # Find the maximum length across all stock data
-    max_length = max(len(df) for df in stock_data.values())
-
-    # Run the backtest
-    for i in range(1, max_length):
-        for stock, df in stock_data.items():
-            if i >= len(df):
-                continue
-
-            current = df.iloc[i]
-            previous = df.iloc[i - 1]
-            current_price = float(current["Close"])
-            previous_price = float(previous["Close"])
-            current_volume = float(current["Volume"])
-            previous_volume = float(previous["Volume"])
-
-            # Calculate changes
-            price_change = ((current_price - previous_price) / previous_price) * 100 if previous_price > 0 else 0
-            volume_change = ((current_volume - previous_volume) / previous_volume) * 100 if previous_volume > 0 else 0
-
-            # Position P&L if holding
-            position = positions.get(stock)
-            position_pnl_pct = 0
-            if position:
-                position_pnl_pct = ((current_price - position["entry_price"]) / position["entry_price"]) * 100
-
-            timestamp_str = str(current["timestamp"])[:19]
-
-            # Evaluate BUY rules (only if not holding this stock)
-            if stock not in positions:
-                for rule in buy_rules:
-                    triggered = False
-                    if rule.changeType == "price_increase":
-                        triggered = price_change >= rule.changePercent
-                    elif rule.changeType == "price_decrease":
-                        triggered = price_change <= -rule.changePercent
-                    elif rule.changeType == "volume_increase":
-                        triggered = volume_change >= rule.changePercent
-                    elif rule.changeType == "volume_decrease":
-                        triggered = volume_change <= -rule.changePercent
-
-                    if triggered:
-                        cost = current_price * rule.quantity
-                        if cash >= cost:
-                            cash -= cost
-                            positions[stock] = {
-                                "entry_price": current_price,
-                                "quantity": rule.quantity,
-                                "entry_timestamp": timestamp_str,
-                            }
-                            trades.append(Trade(
-                                id=f"trade-{i}-{stock}-buy",
-                                timestamp=timestamp_str,
-                                stock=stock,
-                                decision="BUY",
-                                price=current_price,
-                                quantity=rule.quantity,
-                                ruleTriggered=rule.name,
-                            ))
-                            break
-
-            # Evaluate SELL rules (only if holding this stock)
-            if stock in positions:
-                pos = positions[stock]
-                for rule in sell_rules:
-                    triggered = False
-                    if rule.changeType == "price_increase":
-                        triggered = position_pnl_pct >= rule.changePercent
-                    elif rule.changeType == "price_decrease":
-                        triggered = position_pnl_pct <= -rule.changePercent
-                    elif rule.changeType == "volume_increase":
-                        triggered = volume_change >= rule.changePercent
-                    elif rule.changeType == "volume_decrease":
-                        triggered = volume_change <= -rule.changePercent
-
-                    if triggered:
-                        revenue = current_price * pos["quantity"]
-                        pnl = (current_price - pos["entry_price"]) * pos["quantity"]
-                        cash += revenue
-                        del positions[stock]
-                        trades.append(Trade(
-                            id=f"trade-{i}-{stock}-sell",
-                            timestamp=timestamp_str,
-                            stock=stock,
-                            decision="SELL",
-                            price=current_price,
-                            quantity=pos["quantity"],
-                            ruleTriggered=rule.name,
-                            pnl=round(pnl, 2),
-                        ))
-                        break
-
-        # Record portfolio value periodically
-        if i % max(1, max_length // 100) == 0:
-            portfolio_value = cash
-            for stk, pos in positions.items():
-                if stk in stock_data:
-                    df = stock_data[stk]
-                    idx = min(i, len(df) - 1)
-                    portfolio_value += float(df.iloc[idx]["Close"]) * pos["quantity"]
-            portfolio_values.append(round(portfolio_value, 2))
-            # Get timestamp from any available stock
-            for stk, df in stock_data.items():
-                if i < len(df):
-                    timestamps.append(str(df.iloc[i]["timestamp"])[:19])
-                    break
-
-    # Close remaining positions at end
-    for stock, pos in list(positions.items()):
-        if stock in stock_data:
-            df = stock_data[stock]
-            final_price = float(df.iloc[-1]["Close"])
-            pnl = (final_price - pos["entry_price"]) * pos["quantity"]
-            cash += final_price * pos["quantity"]
-            trades.append(Trade(
-                id=f"trade-final-{stock}",
-                timestamp=str(df.iloc[-1]["timestamp"])[:19],
-                stock=stock,
-                decision="SELL",
-                price=final_price,
-                quantity=pos["quantity"],
-                ruleTriggered="End of Backtest",
-                pnl=round(pnl, 2),
-            ))
-
-    # Calculate metrics
-    sell_trades = [t for t in trades if t.decision == "SELL" and t.pnl is not None]
-    winning_trades = len([t for t in sell_trades if t.pnl and t.pnl > 0])
-    losing_trades = len([t for t in sell_trades if t.pnl and t.pnl < 0])
-    total_pnl = sum(t.pnl or 0 for t in sell_trades)
-    percent_return = ((cash - initial_capital) / initial_capital) * 100
-
-    # Calculate max drawdown
-    peak = initial_capital
-    max_drawdown = 0
-    for value in portfolio_values:
-        if value > peak:
-            peak = value
-        drawdown = ((peak - value) / peak) * 100
-        if drawdown > max_drawdown:
-            max_drawdown = drawdown
-
-    portfolio_values.append(round(cash, 2))
-    timestamps.append(end_date)
-
-    return BacktestResponse(
-        totalTrades=len(trades),
-        winningTrades=winning_trades,
-        losingTrades=losing_trades,
-        totalPnL=round(total_pnl, 2),
-        percentReturn=round(percent_return, 2),
-        maxDrawdown=round(max_drawdown, 2),
-        trades=[t.model_dump() for t in trades],
-        portfolioValue=portfolio_values,
-        timestamps=timestamps,
-    )
+    except Exception as e:
+        print(f"Backtest error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Backtest failed: {str(e)}")

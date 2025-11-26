@@ -6,7 +6,8 @@ import {
   TimeframeOption,
   ChangeType,
   Decision,
-  RuleType,
+  PythonRuleType,
+  RuleParams,
   TIMEFRAME_OPTIONS,
   CHANGE_TYPE_OPTIONS,
 } from '../types/trading';
@@ -32,6 +33,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 interface RuleBuilderProps {
   onAddRule: (rule: TradingRule) => void;
@@ -40,8 +42,8 @@ interface RuleBuilderProps {
   onToggleRule: (id: string) => void;
 }
 
-// Simplified rule types with clear descriptions
-const SIMPLIFIED_RULE_TYPES = [
+// Simple rule types (percentage-based triggers)
+const SIMPLE_RULE_TYPES = [
   {
     value: 'buy_the_dip',
     label: 'Buy the Dip',
@@ -74,17 +76,43 @@ const SIMPLIFIED_RULE_TYPES = [
     changeType: 'price_decrease' as ChangeType,
     thresholdLabel: 'Sell when down',
   },
+];
+
+// Python trading rules (from trading_rules module)
+const PYTHON_RULE_TYPES = [
   {
-    value: 'custom',
-    label: 'Custom Rule',
-    description: 'Full control over all parameters',
-    decision: null,
-    changeType: null,
-    thresholdLabel: 'Threshold',
+    value: 'mean_reversal' as PythonRuleType,
+    label: 'Mean Reversal',
+    description: 'Buy when short-term average < long-term average (price below trend)',
+    decision: 'BUY' as Decision,
+    hasShortWindow: true,
+    hasLongWindow: true,
+  },
+  {
+    value: 'early_profit_taker' as PythonRuleType,
+    label: 'Early Profit Taker',
+    description: 'Sell when position profit exceeds threshold',
+    decision: 'SELL' as Decision,
+    hasProfitThreshold: true,
+  },
+  {
+    value: 'early_loss_taker' as PythonRuleType,
+    label: 'Early Loss Taker',
+    description: 'Sell when position loss exceeds threshold (stop loss)',
+    decision: 'SELL' as Decision,
+    hasLossThreshold: true,
+  },
+  {
+    value: 'loss_profit_taker' as PythonRuleType,
+    label: 'Loss/Profit Taker',
+    description: 'Sell on either profit or loss threshold (combines both)',
+    decision: 'SELL' as Decision,
+    hasProfitThreshold: true,
+    hasLossThreshold: true,
   },
 ];
 
-type SimpleRuleType = 'buy_the_dip' | 'buy_momentum' | 'take_profit' | 'stop_loss' | 'custom';
+type SimpleRuleType = 'buy_the_dip' | 'buy_momentum' | 'take_profit' | 'stop_loss';
 
 export default function RuleBuilder({
   onAddRule,
@@ -92,38 +120,35 @@ export default function RuleBuilder({
   onRemoveRule,
   onToggleRule,
 }: RuleBuilderProps) {
+  // Simple rule state
   const [simpleRuleType, setSimpleRuleType] = useState<SimpleRuleType>('buy_the_dip');
-  const [timeframe, setTimeframe] = useState<TimeframeOption>('1D');
-  const [changeType, setChangeType] = useState<ChangeType>('price_decrease');
   const [changePercent, setChangePercent] = useState(3);
-  const [decision, setDecision] = useState<Decision>('BUY');
+
+  // Python rule state
+  const [pythonRuleType, setPythonRuleType] = useState<PythonRuleType>('mean_reversal');
+  const [shortWindow, setShortWindow] = useState(5);
+  const [longWindow, setLongWindow] = useState(20);
+  const [profitThreshold, setProfitThreshold] = useState(2);
+  const [lossThreshold, setLossThreshold] = useState(2);
+
+  // Common state
+  const [timeframe, setTimeframe] = useState<TimeframeOption>('1D');
   const [quantity, setQuantity] = useState(100);
   const [ruleName, setRuleName] = useState('');
 
-  // Get current rule type config
-  const currentRuleConfig = SIMPLIFIED_RULE_TYPES.find(r => r.value === simpleRuleType)!;
-  const isCustom = simpleRuleType === 'custom';
+  const currentSimpleConfig = SIMPLE_RULE_TYPES.find(r => r.value === simpleRuleType)!;
+  const currentPythonConfig = PYTHON_RULE_TYPES.find(r => r.value === pythonRuleType);
 
-  // Update decision and changeType when rule type changes
-  useEffect(() => {
-    if (!isCustom) {
-      if (currentRuleConfig.decision) setDecision(currentRuleConfig.decision);
-      if (currentRuleConfig.changeType) setChangeType(currentRuleConfig.changeType);
-    }
-  }, [simpleRuleType, isCustom, currentRuleConfig]);
-
-  const handleAddRule = () => {
-    const effectiveDecision = isCustom ? decision : currentRuleConfig.decision!;
-    const effectiveChangeType = isCustom ? changeType : currentRuleConfig.changeType!;
-
+  // Add simple rule
+  const handleAddSimpleRule = () => {
     const newRule: TradingRule = {
       id: `rule-${Date.now()}`,
-      name: ruleName || currentRuleConfig.label,
+      name: ruleName || currentSimpleConfig.label,
       ruleType: 'custom',
       timeframe,
-      changeType: effectiveChangeType,
+      changeType: currentSimpleConfig.changeType,
       changePercent,
-      decision: effectiveDecision,
+      decision: currentSimpleConfig.decision,
       quantity,
       enabled: true,
     };
@@ -131,7 +156,68 @@ export default function RuleBuilder({
     setRuleName('');
   };
 
-  const addPresetStrategy = (preset: 'mean_reversion' | 'momentum' | 'conservative') => {
+  // Add Python rule
+  const handleAddPythonRule = () => {
+    if (!currentPythonConfig) return;
+
+    const params: RuleParams = {};
+    if (currentPythonConfig.hasShortWindow) params.shortWindow = shortWindow;
+    if (currentPythonConfig.hasLongWindow) params.longWindow = longWindow;
+    if (currentPythonConfig.hasProfitThreshold) params.profitThreshold = profitThreshold / 100;
+    if (currentPythonConfig.hasLossThreshold) params.lossThreshold = lossThreshold / 100;
+
+    const newRule: TradingRule = {
+      id: `rule-${Date.now()}`,
+      name: ruleName || currentPythonConfig.label,
+      ruleType: pythonRuleType as any,
+      timeframe,
+      decision: currentPythonConfig.decision,
+      quantity,
+      enabled: true,
+      pythonRuleType,
+      params,
+    };
+    onAddRule(newRule);
+    setRuleName('');
+  };
+
+  // Preset strategies using Python rules
+  const addPresetStrategy = (preset: 'mean_reversion_python' | 'mean_reversion' | 'momentum' | 'conservative') => {
+    if (preset === 'mean_reversion_python') {
+      // Uses actual Python trading rules
+      const rules = [
+        {
+          name: 'Mean Reversal Entry',
+          decision: 'BUY' as Decision,
+          pythonRuleType: 'mean_reversal' as PythonRuleType,
+          params: { shortWindow: 5, longWindow: 20 },
+        },
+        {
+          name: 'Loss/Profit Exit',
+          decision: 'SELL' as Decision,
+          pythonRuleType: 'loss_profit_taker' as PythonRuleType,
+          params: { profitThreshold: 0.03, lossThreshold: 0.02 },
+        },
+      ];
+      rules.forEach((rule, index) => {
+        setTimeout(() => {
+          onAddRule({
+            id: `rule-${Date.now()}-${index}`,
+            name: rule.name,
+            ruleType: rule.pythonRuleType as any,
+            timeframe: '1D',
+            decision: rule.decision,
+            quantity: 100,
+            enabled: true,
+            pythonRuleType: rule.pythonRuleType,
+            params: rule.params,
+          });
+        }, index * 10);
+      });
+      return;
+    }
+
+    // Simple percentage-based presets
     const presets = {
       mean_reversion: [
         { name: 'Buy the Dip (3%)', decision: 'BUY' as Decision, changeType: 'price_decrease' as ChangeType, changePercent: 3 },
@@ -179,161 +265,154 @@ export default function RuleBuilder({
             <CardTitle>Quick Start Strategies</CardTitle>
             <CardDescription>Add a complete buy + sell strategy with one click</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  onClick={() => addPresetStrategy('mean_reversion')}
-                  className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10"
-                >
-                  Mean Reversion
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Buy on 3% dip, sell on 2% recovery</p>
-              </TooltipContent>
-            </Tooltip>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    onClick={() => addPresetStrategy('mean_reversion_python')}
+                    className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/10"
+                  >
+                    ⚡ Mean Reversal (Python)
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Uses actual Python trading rules: Mean Reversal entry + Loss/Profit exit</p>
+                </TooltipContent>
+              </Tooltip>
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  onClick={() => addPresetStrategy('momentum')}
-                  className="border-blue-500/50 text-blue-400 hover:bg-blue-500/10"
-                >
-                  Momentum
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Buy on 2% rise, sell on 3% profit or 2% loss</p>
-              </TooltipContent>
-            </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    onClick={() => addPresetStrategy('mean_reversion')}
+                    className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10"
+                  >
+                    Mean Reversion
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Buy on 3% dip, sell on 2% recovery</p>
+                </TooltipContent>
+              </Tooltip>
 
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  onClick={() => addPresetStrategy('conservative')}
-                  className="border-green-500/50 text-green-400 hover:bg-green-500/10"
-                >
-                  Conservative
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Buy on 2% dip, take profit at 5%, stop loss at 3%</p>
-              </TooltipContent>
-            </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    onClick={() => addPresetStrategy('momentum')}
+                    className="border-blue-500/50 text-blue-400 hover:bg-blue-500/10"
+                  >
+                    Momentum
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Buy on 2% rise, sell on 3% profit or 2% loss</p>
+                </TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    onClick={() => addPresetStrategy('conservative')}
+                    className="border-green-500/50 text-green-400 hover:bg-green-500/10"
+                  >
+                    Conservative
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Buy on 2% dip, take profit at 5%, stop loss at 3%</p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
           </CardContent>
         </Card>
 
-        {/* Rule Builder */}
+        {/* Rule Builder with Tabs */}
         <Card>
           <CardHeader>
             <CardTitle>Create Rule</CardTitle>
-            <CardDescription>{currentRuleConfig.description}</CardDescription>
+            <CardDescription>Build custom trading rules</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Rule Type Selection - Visual Cards */}
-            <div className="space-y-2">
-              <Label>What do you want to do?</Label>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                {SIMPLIFIED_RULE_TYPES.filter(r => r.value !== 'custom').map((ruleType) => (
-                  <Button
-                    key={ruleType.value}
-                    variant={simpleRuleType === ruleType.value ? 'default' : 'outline'}
-                    className={`h-auto py-3 flex flex-col items-start text-left ${
-                      simpleRuleType === ruleType.value
-                        ? ''
-                        : ruleType.decision === 'BUY'
-                          ? 'border-green-500/30 hover:border-green-500/50'
-                          : 'border-red-500/30 hover:border-red-500/50'
-                    }`}
-                    onClick={() => setSimpleRuleType(ruleType.value as SimpleRuleType)}
-                  >
-                    <span className="font-medium">{ruleType.label}</span>
-                    <span className="text-xs text-muted-foreground font-normal">
-                      {ruleType.decision === 'BUY' ? 'Entry rule' : 'Exit rule'}
-                    </span>
-                  </Button>
-                ))}
-                <Button
-                  variant={simpleRuleType === 'custom' ? 'default' : 'outline'}
-                  className="h-auto py-3 flex flex-col items-start text-left"
-                  onClick={() => setSimpleRuleType('custom')}
-                >
-                  <span className="font-medium">Custom</span>
-                  <span className="text-xs text-muted-foreground font-normal">Full control</span>
-                </Button>
-              </div>
-            </div>
+          <CardContent>
+            <Tabs defaultValue="simple" className="space-y-4">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="simple">Simple Rules</TabsTrigger>
+                <TabsTrigger value="python">Python Rules</TabsTrigger>
+              </TabsList>
 
-            <Separator />
-
-            {/* Threshold Input - Clear Label */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-4">
-                <div className="flex-1 space-y-2">
-                  <Label htmlFor="changePercent">
-                    {currentRuleConfig.thresholdLabel}
-                  </Label>
-                  <div className="flex items-center gap-2">
-                    <NumberInput
-                      id="changePercent"
-                      value={changePercent}
-                      onChange={setChangePercent}
-                      min={0.1}
-                      max={100}
-                      step={0.5}
-                      formatValue={(v) => v.toFixed(1)}
-                      parseValue={(v) => parseFloat(v) || 0}
-                    />
-                    <span className="text-2xl font-bold text-muted-foreground">%</span>
+              {/* Simple Rules Tab */}
+              <TabsContent value="simple" className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Rule Type</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {SIMPLE_RULE_TYPES.map((ruleType) => (
+                      <Button
+                        key={ruleType.value}
+                        variant={simpleRuleType === ruleType.value ? 'default' : 'outline'}
+                        className={`h-auto py-3 flex flex-col items-start text-left ${
+                          simpleRuleType === ruleType.value
+                            ? ''
+                            : ruleType.decision === 'BUY'
+                              ? 'border-green-500/30 hover:border-green-500/50'
+                              : 'border-red-500/30 hover:border-red-500/50'
+                        }`}
+                        onClick={() => setSimpleRuleType(ruleType.value as SimpleRuleType)}
+                      >
+                        <span className="font-medium">{ruleType.label}</span>
+                        <span className="text-xs text-muted-foreground font-normal">
+                          {ruleType.decision === 'BUY' ? 'Entry rule' : 'Exit rule'}
+                        </span>
+                      </Button>
+                    ))}
                   </div>
                 </div>
-              </div>
 
-              {/* Quick Percent Buttons */}
-              <div className="flex flex-wrap gap-2">
-                {[1, 2, 3, 5, 10].map((pct) => (
-                  <Button
-                    key={pct}
-                    variant={changePercent === pct ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => setChangePercent(pct)}
-                  >
-                    {pct}%
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            {/* Custom Rule Options - Only show for custom */}
-            {isCustom && (
-              <>
                 <Separator />
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Action</Label>
-                    <Select value={decision} onValueChange={(v) => setDecision(v as Decision)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="BUY">BUY (Entry)</SelectItem>
-                        <SelectItem value="SELL">SELL (Exit)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
 
+                <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label>Trigger Condition</Label>
-                    <Select value={changeType} onValueChange={(v) => setChangeType(v as ChangeType)}>
+                    <Label>{currentSimpleConfig.thresholdLabel}</Label>
+                    <div className="flex items-center gap-2">
+                      <NumberInput
+                        value={changePercent}
+                        onChange={setChangePercent}
+                        min={0.1}
+                        max={100}
+                        step={0.5}
+                        formatValue={(v) => v.toFixed(1)}
+                        parseValue={(v) => parseFloat(v) || 0}
+                      />
+                      <span className="text-2xl font-bold text-muted-foreground">%</span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {[1, 2, 3, 5, 10].map((pct) => (
+                      <Button
+                        key={pct}
+                        variant={changePercent === pct ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setChangePercent(pct)}
+                      >
+                        {pct}%
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Timeframe</Label>
+                    <Select value={timeframe} onValueChange={(v) => setTimeframe(v as TimeframeOption)}>
                       <SelectTrigger>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {CHANGE_TYPE_OPTIONS.map((opt) => (
+                        {TIMEFRAME_OPTIONS.map((opt) => (
                           <SelectItem key={opt.value} value={opt.value}>
                             {opt.label}
                           </SelectItem>
@@ -341,59 +420,191 @@ export default function RuleBuilder({
                       </SelectContent>
                     </Select>
                   </div>
+                  <div className="space-y-2">
+                    <Label>Shares per Trade</Label>
+                    <NumberInput
+                      value={quantity}
+                      onChange={setQuantity}
+                      min={1}
+                      max={10000}
+                      step={10}
+                    />
+                  </div>
                 </div>
-              </>
-            )}
 
-            <Separator />
+                <Button onClick={handleAddSimpleRule} className="w-full" size="lg">
+                  <Badge variant={currentSimpleConfig.decision === 'BUY' ? 'default' : 'destructive'} className="mr-2">
+                    {currentSimpleConfig.decision}
+                  </Badge>
+                  Add {currentSimpleConfig.label} Rule
+                </Button>
+              </TabsContent>
 
-            {/* Common Options */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="ruleName">Rule Name (optional)</Label>
-                <Input
-                  id="ruleName"
-                  value={ruleName}
-                  onChange={(e) => setRuleName(e.target.value)}
-                  placeholder={currentRuleConfig.label}
-                />
-              </div>
+              {/* Python Rules Tab */}
+              <TabsContent value="python" className="space-y-4">
+                <Alert className="border-yellow-500/50 bg-yellow-500/10">
+                  <AlertDescription className="text-yellow-500">
+                    These rules use the actual Python trading_rules module for signal generation.
+                  </AlertDescription>
+                </Alert>
 
-              <div className="space-y-2">
-                <Label>Timeframe</Label>
-                <Select value={timeframe} onValueChange={(v) => setTimeframe(v as TimeframeOption)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TIMEFRAME_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
+                <div className="space-y-2">
+                  <Label>Python Rule Type</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {PYTHON_RULE_TYPES.map((ruleType) => (
+                      <Button
+                        key={ruleType.value}
+                        variant={pythonRuleType === ruleType.value ? 'default' : 'outline'}
+                        className={`h-auto py-3 flex flex-col items-start text-left ${
+                          pythonRuleType === ruleType.value
+                            ? ''
+                            : ruleType.decision === 'BUY'
+                              ? 'border-green-500/30 hover:border-green-500/50'
+                              : 'border-red-500/30 hover:border-red-500/50'
+                        }`}
+                        onClick={() => setPythonRuleType(ruleType.value)}
+                      >
+                        <span className="font-medium">{ruleType.label}</span>
+                        <span className="text-xs text-muted-foreground font-normal">
+                          {ruleType.decision === 'BUY' ? 'Entry rule' : 'Exit rule'}
+                        </span>
+                      </Button>
                     ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                  </div>
+                </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="quantity">Shares per Trade</Label>
-                <NumberInput
-                  id="quantity"
-                  value={quantity}
-                  onChange={setQuantity}
-                  min={1}
-                  max={10000}
-                  step={10}
-                />
-              </div>
-            </div>
+                {currentPythonConfig && (
+                  <p className="text-sm text-muted-foreground">{currentPythonConfig.description}</p>
+                )}
 
-            <Button onClick={handleAddRule} className="w-full" size="lg">
-              <Badge variant={isCustom ? (decision === 'BUY' ? 'default' : 'destructive') : (currentRuleConfig.decision === 'BUY' ? 'default' : 'destructive')} className="mr-2">
-                {isCustom ? decision : currentRuleConfig.decision}
-              </Badge>
-              Add {ruleName || currentRuleConfig.label} Rule
-            </Button>
+                <Separator />
+
+                {/* Mean Reversal Parameters */}
+                {currentPythonConfig?.hasShortWindow && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Short Window (periods)</Label>
+                      <NumberInput
+                        value={shortWindow}
+                        onChange={setShortWindow}
+                        min={2}
+                        max={50}
+                        step={1}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Long Window (periods)</Label>
+                      <NumberInput
+                        value={longWindow}
+                        onChange={setLongWindow}
+                        min={5}
+                        max={200}
+                        step={1}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Profit Threshold */}
+                {currentPythonConfig?.hasProfitThreshold && (
+                  <div className="space-y-2">
+                    <Label>Profit Threshold</Label>
+                    <div className="flex items-center gap-2">
+                      <NumberInput
+                        value={profitThreshold}
+                        onChange={setProfitThreshold}
+                        min={0.1}
+                        max={100}
+                        step={0.5}
+                        formatValue={(v) => v.toFixed(1)}
+                        parseValue={(v) => parseFloat(v) || 0}
+                      />
+                      <span className="text-2xl font-bold text-muted-foreground">%</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {[1, 2, 3, 5, 10].map((pct) => (
+                        <Button
+                          key={pct}
+                          variant={profitThreshold === pct ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setProfitThreshold(pct)}
+                        >
+                          {pct}%
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Loss Threshold */}
+                {currentPythonConfig?.hasLossThreshold && (
+                  <div className="space-y-2">
+                    <Label>Loss Threshold</Label>
+                    <div className="flex items-center gap-2">
+                      <NumberInput
+                        value={lossThreshold}
+                        onChange={setLossThreshold}
+                        min={0.1}
+                        max={100}
+                        step={0.5}
+                        formatValue={(v) => v.toFixed(1)}
+                        parseValue={(v) => parseFloat(v) || 0}
+                      />
+                      <span className="text-2xl font-bold text-muted-foreground">%</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {[1, 2, 3, 5, 10].map((pct) => (
+                        <Button
+                          key={pct}
+                          variant={lossThreshold === pct ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setLossThreshold(pct)}
+                        >
+                          {pct}%
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <Separator />
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Timeframe</Label>
+                    <Select value={timeframe} onValueChange={(v) => setTimeframe(v as TimeframeOption)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TIMEFRAME_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Shares per Trade</Label>
+                    <NumberInput
+                      value={quantity}
+                      onChange={setQuantity}
+                      min={1}
+                      max={10000}
+                      step={10}
+                    />
+                  </div>
+                </div>
+
+                <Button onClick={handleAddPythonRule} className="w-full" size="lg">
+                  <Badge variant={currentPythonConfig?.decision === 'BUY' ? 'default' : 'destructive'} className="mr-2">
+                    {currentPythonConfig?.decision}
+                  </Badge>
+                  Add {currentPythonConfig?.label} Rule
+                </Button>
+              </TabsContent>
+            </Tabs>
           </CardContent>
         </Card>
 
@@ -408,7 +619,6 @@ export default function RuleBuilder({
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Warning if missing BUY or SELL rules */}
               {existingRules.length > 0 && (!hasBuyRule || !hasSellRule) && (
                 <Alert variant="default" className="border-yellow-500/50 bg-yellow-500/10">
                   <AlertDescription className="text-yellow-500">
@@ -428,10 +638,30 @@ export default function RuleBuilder({
                           <Badge variant={rule.decision === 'BUY' ? 'default' : 'destructive'}>
                             {rule.decision === 'BUY' ? 'ENTRY' : 'EXIT'}
                           </Badge>
+                          {rule.pythonRuleType && (
+                            <Badge variant="outline" className="border-yellow-500/50 text-yellow-500">
+                              Python
+                            </Badge>
+                          )}
                           <span className="font-medium">{rule.name}</span>
                         </div>
                         <p className="text-sm text-muted-foreground mt-1">
-                          {rule.decision === 'BUY' ? 'Buy' : 'Sell'} when {rule.changeType === 'price_increase' ? 'up' : 'down'} {rule.changePercent}%
+                          {rule.pythonRuleType ? (
+                            <>
+                              {rule.pythonRuleType === 'mean_reversal' &&
+                                `Short: ${rule.params?.shortWindow}, Long: ${rule.params?.longWindow}`}
+                              {rule.pythonRuleType === 'early_profit_taker' &&
+                                `Profit threshold: ${((rule.params?.profitThreshold || 0) * 100).toFixed(1)}%`}
+                              {rule.pythonRuleType === 'early_loss_taker' &&
+                                `Loss threshold: ${((rule.params?.lossThreshold || 0) * 100).toFixed(1)}%`}
+                              {rule.pythonRuleType === 'loss_profit_taker' &&
+                                `Profit: ${((rule.params?.profitThreshold || 0) * 100).toFixed(1)}%, Loss: ${((rule.params?.lossThreshold || 0) * 100).toFixed(1)}%`}
+                            </>
+                          ) : (
+                            <>
+                              {rule.decision === 'BUY' ? 'Buy' : 'Sell'} when {rule.changeType === 'price_increase' ? 'up' : 'down'} {rule.changePercent}%
+                            </>
+                          )}
                           {' · '}{TIMEFRAME_OPTIONS.find((t) => t.value === rule.timeframe)?.label}
                           {' · '}{rule.quantity} shares
                         </p>

@@ -6,16 +6,30 @@ export type Decision = 'BUY' | 'SELL';
 
 export type RuleType = 'early_profit_taker' | 'early_loss_taker' | 'mean_reversal' | 'loss_profit_taker' | 'custom';
 
+// Python trading rule types (maps to trading_rules module)
+export type PythonRuleType = 'mean_reversal' | 'early_profit_taker' | 'early_loss_taker' | 'loss_profit_taker' | null;
+
+// Parameters for Python trading rules
+export interface RuleParams {
+  shortWindow?: number;  // For mean reversal
+  longWindow?: number;   // For mean reversal
+  profitThreshold?: number;  // For profit taker (decimal, e.g., 0.02 = 2%)
+  lossThreshold?: number;    // For loss taker (decimal, e.g., 0.02 = 2%)
+}
+
 export interface TradingRule {
   id: string;
   name: string;
   ruleType: RuleType;
   timeframe: TimeframeOption;
-  changeType: ChangeType;
-  changePercent: number;
+  changeType?: ChangeType;  // Optional for Python rules
+  changePercent?: number;   // Optional for Python rules
   decision: Decision;
   quantity: number;
   enabled: boolean;
+  // New fields for Python trading rules
+  pythonRuleType?: PythonRuleType;
+  params?: RuleParams;
 }
 
 export interface BacktestConfig {
