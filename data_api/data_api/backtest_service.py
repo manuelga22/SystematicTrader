@@ -131,6 +131,11 @@ def run_backtest(
     """
     Run a backtest using the actual trading_rules module.
     """
+    # Debug: Log incoming rules with their quantities
+    print(f"[Backtest] Received {len(rules)} rules:")
+    for r in rules:
+        print(f"  - {r.get('name')}: decision={r.get('decision')}, quantity={r.get('quantity')}")
+
     # Separate rules by type
     buy_rules_config = [r for r in rules if r.get("enabled", True) and r.get("decision") == "BUY"]
     sell_rules_config = [r for r in rules if r.get("enabled", True) and r.get("decision") == "SELL"]
@@ -224,6 +229,7 @@ def run_backtest(
             if stock not in held_stocks:
                 buy_triggered = False
                 triggered_rule_name = ""
+                triggered_rule_qty = quantity_per_trade  # Default fallback
 
                 # Check Python rules first
                 for rule_config, rule in python_buy_rules:
@@ -231,6 +237,7 @@ def run_backtest(
                     if signal == TradingSignalEnum.BUY:
                         buy_triggered = True
                         triggered_rule_name = rule_config.get("name", "Python Rule")
+                        triggered_rule_qty = rule_config.get("quantity", quantity_per_trade)
                         break
 
                 # Check simple rules if no Python rule triggered
@@ -242,15 +249,18 @@ def run_backtest(
                         if change_type == "price_decrease" and price_change_pct <= -threshold:
                             buy_triggered = True
                             triggered_rule_name = rule_config.get("name", "Price Dip")
+                            triggered_rule_qty = rule_config.get("quantity", quantity_per_trade)
                             break
                         elif change_type == "price_increase" and price_change_pct >= threshold:
                             buy_triggered = True
                             triggered_rule_name = rule_config.get("name", "Price Momentum")
+                            triggered_rule_qty = rule_config.get("quantity", quantity_per_trade)
                             break
 
                 if buy_triggered:
-                    qty = quantity_per_trade
+                    qty = triggered_rule_qty
                     cost = current_price * qty
+                    print(f"[Trade] BUY triggered: {triggered_rule_name}, quantity={qty}, cost=${cost:.2f}, cash=${cash:.2f}")
                     if cash >= cost:
                         cash -= cost
                         held_stocks[stock] = {
@@ -267,6 +277,9 @@ def run_backtest(
                             quantity=qty,
                             rule_triggered=triggered_rule_name
                         ))
+                        print(f"[Trade] BUY executed: {stock} x {qty} @ ${current_price:.2f}")
+                    else:
+                        print(f"[Trade] BUY skipped - insufficient funds: need ${cost:.2f}, have ${cash:.2f}")
 
             # Check SELL signals (only if holding this stock)
             if stock in held_stocks:
@@ -300,8 +313,10 @@ def run_backtest(
                             break
 
                 if sell_triggered:
-                    revenue = current_price * pos["quantity"]
-                    pnl = (current_price - pos["entry_price"]) * pos["quantity"]
+                    sell_qty = pos["quantity"]  # Sell all shares in position
+                    revenue = current_price * sell_qty
+                    pnl = (current_price - pos["entry_price"]) * sell_qty
+                    print(f"[Trade] SELL executed: {stock} x {sell_qty} @ ${current_price:.2f}, P&L: ${pnl:.2f}")
                     cash += revenue
                     del held_stocks[stock]
                     trades.append(TradeRecord(
@@ -310,7 +325,7 @@ def run_backtest(
                         stock=stock,
                         decision="SELL",
                         price=current_price,
-                        quantity=pos["quantity"],
+                        quantity=sell_qty,
                         rule_triggered=triggered_rule_name,
                         pnl=round(pnl, 2)
                     ))

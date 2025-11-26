@@ -54,6 +54,13 @@ export default function Home() {
     setResults(null);
 
     try {
+      // Debug: Log rules being sent
+      console.log('[Backtest] Sending rules:', rules.map(r => ({
+        name: r.name,
+        decision: r.decision,
+        quantity: r.quantity
+      })));
+
       const response = await fetch('/api/backtest', {
         method: 'POST',
         headers: {

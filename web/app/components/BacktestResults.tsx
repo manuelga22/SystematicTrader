@@ -84,8 +84,10 @@ export default function BacktestResults({ results, isLoading }: BacktestResultsP
     );
   }
 
-  const winRate = results.totalTrades > 0
-    ? ((results.winningTrades / results.totalTrades) * 100).toFixed(1)
+  // Win Rate = winning trades / completed trades (sells only, not buys)
+  const completedTrades = results.winningTrades + results.losingTrades;
+  const winRate = completedTrades > 0
+    ? ((results.winningTrades / completedTrades) * 100).toFixed(1)
     : '0';
 
   return (

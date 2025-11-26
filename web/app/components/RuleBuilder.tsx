@@ -207,7 +207,7 @@ export default function RuleBuilder({
             ruleType: rule.pythonRuleType as any,
             timeframe: '1D',
             decision: rule.decision,
-            quantity: 100,
+            quantity,
             enabled: true,
             pythonRuleType: rule.pythonRuleType,
             params: rule.params,
@@ -245,7 +245,7 @@ export default function RuleBuilder({
           changeType: rule.changeType,
           changePercent: rule.changePercent,
           decision: rule.decision,
-          quantity: 100,
+          quantity,
           enabled: true,
         });
       }, index * 10);
@@ -420,16 +420,23 @@ export default function RuleBuilder({
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Shares per Trade</Label>
-                    <NumberInput
-                      value={quantity}
-                      onChange={setQuantity}
-                      min={1}
-                      max={10000}
-                      step={10}
-                    />
-                  </div>
+                  {currentSimpleConfig.decision === 'BUY' ? (
+                    <div className="space-y-2">
+                      <Label>Shares to Buy</Label>
+                      <NumberInput
+                        value={quantity}
+                        onChange={setQuantity}
+                        min={1}
+                        max={10000}
+                        step={10}
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label className="text-muted-foreground">Shares to Sell</Label>
+                      <p className="text-sm text-muted-foreground mt-2">Sells all shares in position</p>
+                    </div>
+                  )}
                 </div>
 
                 <Button onClick={handleAddSimpleRule} className="w-full" size="lg">
@@ -585,16 +592,23 @@ export default function RuleBuilder({
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2">
-                    <Label>Shares per Trade</Label>
-                    <NumberInput
-                      value={quantity}
-                      onChange={setQuantity}
-                      min={1}
-                      max={10000}
-                      step={10}
-                    />
-                  </div>
+                  {currentPythonConfig?.decision === 'BUY' ? (
+                    <div className="space-y-2">
+                      <Label>Shares to Buy</Label>
+                      <NumberInput
+                        value={quantity}
+                        onChange={setQuantity}
+                        min={1}
+                        max={10000}
+                        step={10}
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label className="text-muted-foreground">Shares to Sell</Label>
+                      <p className="text-sm text-muted-foreground mt-2">Sells all shares in position</p>
+                    </div>
+                  )}
                 </div>
 
                 <Button onClick={handleAddPythonRule} className="w-full" size="lg">
@@ -663,7 +677,7 @@ export default function RuleBuilder({
                             </>
                           )}
                           {' · '}{TIMEFRAME_OPTIONS.find((t) => t.value === rule.timeframe)?.label}
-                          {' · '}{rule.quantity} shares
+                          {rule.decision === 'BUY' ? ` · ${rule.quantity} shares` : ' · sells all'}
                         </p>
                       </div>
                       <div className="flex items-center gap-3">
