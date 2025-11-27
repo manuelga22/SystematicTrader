@@ -1,13 +1,75 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Literal
 import pandas as pd
 import yfinance as yf
+from datetime import datetime
 
 from .indicators import sma, ema, rsi, atr, bollinger, macd
 
 app = FastAPI(title="Systematic Trader Data API", version="0.1.0")
+
+# Enable CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---- Pydantic Models for Backtest ----
+class RuleParams(BaseModel):
+    """Parameters for Python trading rules"""
+    shortWindow: Optional[int] = 5
+    longWindow: Optional[int] = 20
+    profitThreshold: Optional[float] = 0.02
+    lossThreshold: Optional[float] = 0.02
+
+class TradingRuleConfig(BaseModel):
+    id: str
+    name: str
+    ruleType: str
+    timeframe: str
+    changeType: Optional[Literal["price_increase", "price_decrease", "volume_increase", "volume_decrease"]] = None
+    changePercent: Optional[float] = None
+    decision: Literal["BUY", "SELL"]
+    quantity: int
+    enabled: bool
+    # New fields for Python trading rules
+    pythonRuleType: Optional[str] = None  # mean_reversal, early_profit_taker, etc.
+    params: Optional[RuleParams] = None
+
+class BacktestRequest(BaseModel):
+    stocks: List[str]
+    startDate: str
+    endDate: str
+    initialCapital: float
+    rules: List[TradingRuleConfig]
+    quantityPerTrade: Optional[int] = 100
+
+class Trade(BaseModel):
+    id: str
+    timestamp: str
+    stock: str
+    decision: str
+    price: float
+    quantity: int
+    ruleTriggered: str
+    pnl: Optional[float] = None
+
+class BacktestResponse(BaseModel):
+    totalTrades: int
+    winningTrades: int
+    losingTrades: int
+    totalPnL: float
+    percentReturn: float
+    maxDrawdown: float
+    trades: List[Trade]
+    portfolioValue: List[float]
+    timestamps: List[str]
 
 # Practical interval limits (days) for yfinance
 INTERVAL_LIMITS = {
@@ -39,7 +101,7 @@ def _fetch_history(
             detail={"code": "BAD_INTERVAL", "allowed": list(INTERVAL_LIMITS.keys())}
         )
 
-    # yfinance call with threads=False + try/except
+    # Safer yfinance call: disable threads and catch errors
     try:
         df = yf.download(
             ticker,
@@ -48,10 +110,9 @@ def _fetch_history(
             interval=interval,
             auto_adjust=False,
             progress=False,
-            threads=False,  # <-- important: avoids YFTzMissingError/timezone issues
+            threads=False,  # <- important: avoids some YFTzMissingError / timezone issues
         )
     except Exception as e:
-        # Surface a clean error instead of a cryptic traceback
         raise HTTPException(
             status_code=502,
             detail={
@@ -69,9 +130,38 @@ def _fetch_history(
 
     # Normalize columns + index
     df = df.rename(columns=str.title)
-    df = df.reset_index().rename(columns={"Date": "timestamp"})
+    df = df.reset_index()
+
+    # yfinance usually uses "Date" for 1d and "Datetime" for intraday
+    if "Date" in df.columns:
+        df = df.rename(columns={"Date": "timestamp"})
+    elif "Datetime" in df.columns:
+        df = df.rename(columns={"Datetime": "timestamp"})
+    else:
+        # Unexpected schema; surface it clearly
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "INVALID_DATA_FORMAT",
+                "ticker": ticker,
+                "columns": df.columns.tolist(),
+            },
+        )
+
     # Keep standard schema
     cols = ["timestamp", "Open", "High", "Low", "Close", "Adj Close", "Volume"]
+    for c in cols:
+        if c not in df.columns:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "code": "MISSING_COLUMN",
+                    "column": c,
+                    "ticker": ticker,
+                    "columns": df.columns.tolist(),
+                },
+            )
+
     df = df[cols]
     # sort ascending just in case
     df = df.sort_values("timestamp").reset_index(drop=True)
@@ -202,3 +292,89 @@ def indicators(
     if format == "csv":
         return PlainTextResponse(df.to_csv(index=False))
     return JSONResponse(df.to_dict(orient="records"))
+
+
+# ---- Backtest Endpoint ----
+
+@app.post("/backtest", response_model=BacktestResponse)
+def run_backtest_endpoint(config: BacktestRequest):
+    """
+    Run a backtest with the given configuration using real market data.
+    Supports both simple rules and Python trading_rules module.
+    """
+    from .backtest_service import run_backtest, TradeRecord
+
+    stocks = config.stocks
+    start_date = config.startDate
+    end_date = config.endDate
+    initial_capital = config.initialCapital
+    quantity_per_trade = config.quantityPerTrade or 100
+
+    # Convert Pydantic models to dicts for the service
+    rules = []
+    for r in config.rules:
+        rule_dict = {
+            "id": r.id,
+            "name": r.name,
+            "ruleType": r.ruleType,
+            "timeframe": r.timeframe,
+            "changeType": r.changeType,
+            "changePercent": r.changePercent,
+            "decision": r.decision,
+            "quantity": r.quantity,
+            "enabled": r.enabled,
+            "pythonRuleType": r.pythonRuleType,
+            "params": r.params.model_dump() if r.params else None
+        }
+        rules.append(rule_dict)
+
+    if not stocks:
+        raise HTTPException(status_code=400, detail="No stocks selected")
+    if not rules:
+        raise HTTPException(status_code=400, detail="No rules configured")
+
+    enabled_rules = [r for r in rules if r.get("enabled", True)]
+    if not enabled_rules:
+        raise HTTPException(status_code=400, detail="No rules enabled")
+
+    try:
+        result = run_backtest(
+            stocks=stocks,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=initial_capital,
+            rules=enabled_rules,
+            quantity_per_trade=quantity_per_trade
+        )
+
+        # Convert TradeRecord objects to Trade dicts
+        trades = []
+        for t in result.trades:
+            trades.append({
+                "id": t.id,
+                "timestamp": t.timestamp,
+                "stock": t.stock,
+                "decision": t.decision,
+                "price": t.price,
+                "quantity": t.quantity,
+                "ruleTriggered": t.rule_triggered,
+                "pnl": t.pnl
+            })
+
+        return BacktestResponse(
+            totalTrades=result.total_trades,
+            winningTrades=result.winning_trades,
+            losingTrades=result.losing_trades,
+            totalPnL=result.total_pnl,
+            percentReturn=result.percent_return,
+            maxDrawdown=result.max_drawdown,
+            trades=trades,
+            portfolioValue=result.portfolio_values,
+            timestamps=result.timestamps,
+        )
+
+    except Exception as e:
+        print(f"Backtest error: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Backtest failed: {str(e)}")
