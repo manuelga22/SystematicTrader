@@ -27,13 +27,45 @@ INTERVAL_LIMITS = {
 }
 
 # ---- Helpers ----------------------------------------------------------------
-def _fetch_history(ticker: str, start: Optional[str], end: Optional[str], interval: str) -> pd.DataFrame:
+def _fetch_history(
+    ticker: str,
+    start: Optional[str],
+    end: Optional[str],
+    interval: str
+) -> pd.DataFrame:
     if interval not in INTERVAL_LIMITS:
-        raise HTTPException(status_code=400, detail={"code": "BAD_INTERVAL", "allowed": list(INTERVAL_LIMITS.keys())})
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "BAD_INTERVAL", "allowed": list(INTERVAL_LIMITS.keys())}
+        )
 
-    df = yf.download(ticker, start=start, end=end, interval=interval, auto_adjust=False, progress=False)
+    # yfinance call with threads=False + try/except
+    try:
+        df = yf.download(
+            ticker,
+            start=start,
+            end=end,
+            interval=interval,
+            auto_adjust=False,
+            progress=False,
+            threads=False,  # <-- important: avoids YFTzMissingError/timezone issues
+        )
+    except Exception as e:
+        # Surface a clean error instead of a cryptic traceback
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "YFINANCE_ERROR",
+                "ticker": ticker,
+                "reason": str(e),
+            },
+        )
+
     if df is None or df.empty:
-        raise HTTPException(status_code=404, detail={"code": "TICKER_NOT_FOUND", "ticker": ticker})
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "TICKER_NOT_FOUND", "ticker": ticker}
+        )
 
     # Normalize columns + index
     df = df.rename(columns=str.title)
@@ -60,7 +92,12 @@ def _max_lookback_needed(indicators: List[str], p: Dict) -> int:
     if "bollinger" in L:
         need = max(need, int(p.get("bb_window", 20)))
     if "macd" in L:
-        need = max(need, int(p.get("macd_slow", 26)), int(p.get("macd_fast", 12)), int(p.get("macd_signal", 9)))
+        need = max(
+            need,
+            int(p.get("macd_slow", 26)),
+            int(p.get("macd_fast", 12)),
+            int(p.get("macd_signal", 9)),
+        )
     return need
 
 def _apply_indicators(df: pd.DataFrame, indicators: List[str], p: Dict) -> pd.DataFrame:
@@ -156,7 +193,10 @@ def indicators(
     # guard: ensure enough bars for the longest lookback requested
     need = _max_lookback_needed(want_list, params)
     if len(df) < need:
-        raise HTTPException(status_code=422, detail={"code": "INSUFFICIENT_DATA", "need_bars": int(need)})
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "INSUFFICIENT_DATA", "need_bars": int(need)}
+        )
 
     df = _apply_indicators(df, want_list, params)
     if format == "csv":
