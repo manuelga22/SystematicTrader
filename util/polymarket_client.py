@@ -6,9 +6,15 @@ operate on normalized dataframes instead of Polymarket-specific payloads.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
+import os
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -20,10 +26,73 @@ import pandas as pd
 GAMMA_API_URL = "https://gamma-api.polymarket.com"
 CLOB_API_URL = "https://clob.polymarket.com"
 DEFAULT_TIMEOUT_SECONDS = 30
+DEFAULT_ENV_PATH = Path(__file__).resolve().parents[1] / "polymarket.env"
 
 
 class PolymarketClientError(RuntimeError):
     """Raised when Polymarket data cannot be fetched or normalized."""
+
+
+@dataclass(frozen=True)
+class PolymarketCredentials:
+    """Polymarket credentials loaded from environment variables."""
+
+    address: str | None = None
+    api_key: str | None = None
+    api_secret: str | None = None
+    api_passphrase: str | None = None
+    private_key: str | None = None
+
+    @classmethod
+    def from_env_file(cls, env_path: str | Path | None = DEFAULT_ENV_PATH) -> "PolymarketCredentials":
+        values = _load_env_file(env_path)
+        values.update({key: value for key, value in os.environ.items() if value})
+
+        return cls(
+            address=values.get("POLYMARKET_ADDRESS") or values.get("POLY_ADDRESS"),
+            api_key=values.get("POLYMARKET_API_KEY") or values.get("POLY_API_KEY"),
+            api_secret=values.get("POLYMARKET_API_SECRET"),
+            api_passphrase=(
+                values.get("POLYMARKET_API_PASSPHRASE")
+                or values.get("POLYMARKET_PASSPHRASE")
+                or values.get("POLY_PASSPHRASE")
+            ),
+            private_key=values.get("POLYMARKET_PRIVATE_KEY") or values.get("PRIVATE_KEY"),
+        )
+
+    def has_l2_credentials(self) -> bool:
+        return all([self.address, self.api_key, self.api_secret, self.api_passphrase])
+
+    def l2_headers(
+        self,
+        method: str,
+        request_path: str,
+        body: Any = None,
+        timestamp: int | None = None,
+    ) -> dict[str, str]:
+        """Create Polymarket L2 auth headers for authenticated CLOB requests."""
+        if not self.has_l2_credentials():
+            raise PolymarketClientError(
+                "Missing L2 credentials. Set POLYMARKET_ADDRESS, "
+                "POLYMARKET_API_KEY, POLYMARKET_API_SECRET, and "
+                "POLYMARKET_API_PASSPHRASE in polymarket.env."
+            )
+
+        ts = int(timestamp or time.time())
+        signature = _build_hmac_signature(
+            secret=str(self.api_secret),
+            timestamp=ts,
+            method=method,
+            request_path=request_path,
+            body=body,
+        )
+        return {
+            "POLY_ADDRESS": str(self.address),
+            "POLY_SIGNATURE": signature,
+            "POLY_TIMESTAMP": str(ts),
+            "POLY_API_KEY": str(self.api_key),
+            "POLY_PASSPHRASE": str(self.api_passphrase),
+        }
 
 
 @dataclass(frozen=True)
@@ -64,10 +133,15 @@ class PolymarketClient:
         gamma_api_url: str = GAMMA_API_URL,
         clob_api_url: str = CLOB_API_URL,
         timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+        env_path: str | Path | None = DEFAULT_ENV_PATH,
+        credentials: PolymarketCredentials | None = None,
+        authenticate_clob_reads: bool = False,
     ) -> None:
         self.gamma_api_url = gamma_api_url.rstrip("/")
         self.clob_api_url = clob_api_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self.credentials = credentials or PolymarketCredentials.from_env_file(env_path)
+        self.authenticate_clob_reads = authenticate_clob_reads
 
     def get_market_by_slug(self, slug: str) -> PolymarketMarket:
         """Fetch market metadata from Gamma by URL slug."""
@@ -102,7 +176,11 @@ class PolymarketClient:
         if fidelity is not None:
             params["fidelity"] = fidelity
 
-        payload = self._get_json(f"{self.clob_api_url}/prices-history", params=params)
+        payload = self._get_json(
+            f"{self.clob_api_url}/prices-history",
+            params=params,
+            authenticated=self.authenticate_clob_reads,
+        )
         history = payload.get("history") if isinstance(payload, dict) else None
         if not isinstance(history, list):
             raise PolymarketClientError("Unexpected price history response")
@@ -129,7 +207,7 @@ class PolymarketClient:
         outcome: str = "Yes",
         start: datetime | str | int | float | None = None,
         end: datetime | str | int | float | None = None,
-        interval: str | None = None,
+        interval: str | None = "all",
         fidelity: int | None = 1,
     ) -> tuple[PolymarketMarket, PolymarketToken, pd.DataFrame]:
         """Resolve an outcome token for a market slug and fetch its history."""
@@ -144,14 +222,92 @@ class PolymarketClient:
         )
         return market, token, history
 
-    def _get_json(self, url: str, params: dict[str, Any] | None = None) -> Any:
+    def get_both_outcomes_price_history(
+        self,
+        market_slug: str,
+        start: datetime | str | int | float | None = None,
+        end: datetime | str | int | float | None = None,
+        interval: str | None = None,
+        fidelity: int | None = 1,
+    ) -> pd.DataFrame:
+        """Fetch price history for both Yes and No outcomes in a single dataframe.
+        
+        Returns:
+            DataFrame with columns: timestamp, price, token_id, outcome.
+            The 'outcome' column contains 1 for "Yes" and 0 for "No".
+        """
+        dfs = []
+        for outcome_name, outcome_value in [("Yes", 1), ("No", 0)]:
+            market, token, history = self.get_outcome_price_history(
+                market_slug=market_slug,
+                outcome=outcome_name,
+                start=start,
+                end=end,
+                interval=interval,
+                fidelity=fidelity,
+            )
+            history["outcome"] = outcome_value
+            dfs.append(history)
+        
+        combined = pd.concat(dfs, ignore_index=True)
+        return combined.sort_values("timestamp").reset_index(drop=True)
+
+    def _get_json(
+        self,
+        url: str,
+        params: dict[str, Any] | None = None,
+        authenticated: bool = False,
+    ) -> Any:
         query = f"?{urlencode(params)}" if params else ""
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "SystematicTrader/0.1",
+        }
+        if authenticated:
+            headers.update(self.credentials.l2_headers("GET", self._request_path(url, query)))
+
         request = Request(
             f"{url}{query}",
-            headers={
-                "Accept": "application/json",
-                "User-Agent": "SystematicTrader/0.1",
-            },
+            headers=headers,
+        )
+
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace")
+            raise PolymarketClientError(f"Polymarket HTTP {exc.code}: {details}") from exc
+        except (URLError, TimeoutError) as exc:
+            raise PolymarketClientError(f"Could not reach Polymarket: {exc}") from exc
+        except json.JSONDecodeError as exc:
+            raise PolymarketClientError("Polymarket returned invalid JSON") from exc
+
+    def _post_json(
+        self,
+        url: str,
+        body: dict[str, Any] | list[Any] | None = None,
+        authenticated: bool = True,
+    ) -> Any:
+        serialized_body = json.dumps(body or {}, separators=(",", ":"))
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "SystematicTrader/0.1",
+        }
+        if authenticated:
+            headers.update(
+                self.credentials.l2_headers(
+                    "POST",
+                    self._request_path(url),
+                    body=serialized_body,
+                )
+            )
+
+        request = Request(
+            url,
+            data=serialized_body.encode("utf-8"),
+            headers=headers,
+            method="POST",
         )
 
         try:
@@ -224,3 +380,57 @@ class PolymarketClient:
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return int(parsed.timestamp())
+
+    @staticmethod
+    def _request_path(url: str, query: str = "") -> str:
+        marker = "://"
+        if marker in url:
+            path_start = url.find("/", url.find(marker) + len(marker))
+            path = url[path_start:] if path_start >= 0 else "/"
+        else:
+            path = url
+        return f"{path}{query}"
+
+
+def _load_env_file(env_path: str | Path | None) -> dict[str, str]:
+    if env_path is None:
+        return {}
+
+    path = Path(env_path)
+    if not path.exists():
+        return {}
+
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            values[key] = value
+    return values
+
+
+def _build_hmac_signature(
+    secret: str,
+    timestamp: int,
+    method: str,
+    request_path: str,
+    body: Any = None,
+) -> str:
+    try:
+        decoded_secret = base64.urlsafe_b64decode(secret)
+    except Exception as exc:
+        raise PolymarketClientError(
+            "POLYMARKET_API_SECRET must be the base64-encoded API secret from Polymarket."
+        ) from exc
+
+    message = f"{timestamp}{method}{request_path}"
+    if body:
+        message += str(body).replace("'", '"')
+
+    digest = hmac.new(decoded_secret, message.encode("utf-8"), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(digest).decode("utf-8")
