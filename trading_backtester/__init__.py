@@ -1,15 +1,7 @@
-"""Backtesting utilities for different market data sources."""
+import sys
+import os
 
-from .polymarket_backtester import (
-    PolymarketBacktestConfig,
-    PolymarketBacktester,
-    run_polymarket_backtest,
-)
-from util.polymarket_client import PolymarketClient
-
-__all__ = [
-    "PolymarketBacktestConfig",
-    "PolymarketBacktester",
-    "PolymarketClient",
-    "run_polymarket_backtest",
-]
+project_root = os.path.join(os.path.dirname(__file__), '..')
+trading_rules_dir = os.path.join(project_root, 'util')
+sys.path.insert(0, project_root)
+sys.path.insert(0, trading_rules_dir)

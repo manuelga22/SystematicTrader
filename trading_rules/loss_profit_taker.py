@@ -1,9 +1,9 @@
 
-from signals import TradingSignal, TradingSignalEnum
+from trading_rules.signals import TradingSignal, TradingSignalEnum
 from trading_rules.trading_rule import TradingRule
-from timeframes import TimeframesEnum
-from market_data import MarketData
-from position_data import Positions
+from trading_rules.timeframes import TimeframesEnum
+from trading_rules.market_data import MarketData
+from trading_rules.position_data import Positions
 
 DEFAULT_THRESHOLD = 0.02  # 2% loss threshold
 DESCRIPTION = """Trading rule that exits trades early if a predefined loss or profit threshold is met.\n

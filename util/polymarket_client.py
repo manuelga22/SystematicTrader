@@ -1,37 +1,51 @@
-"""Read-only Polymarket data access.
+"""Read-only Polymarket data access using pmxt library.
 
-This module intentionally owns API shape and HTTP details so backtest logic can
+This module uses pmxt for market data access so backtest logic can
 operate on normalized dataframes instead of Polymarket-specific payloads.
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import json
+import pmxt
 import os
-import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
 import pandas as pd
+from pmxt import Polymarket as PMXTClient
 
-
-GAMMA_API_URL = "https://gamma-api.polymarket.com"
-CLOB_API_URL = "https://clob.polymarket.com"
-DEFAULT_TIMEOUT_SECONDS = 30
 DEFAULT_ENV_PATH = Path(__file__).resolve().parents[1] / "polymarket.env"
-
 
 class PolymarketClientError(RuntimeError):
     """Raised when Polymarket data cannot be fetched or normalized."""
 
+
+# Convert interval into seconds
+interval_seconds_map = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "4h": 14400,
+    "1d": 86400,
+}
+
+class TickDataEnum:
+    """Enumeration of tick data intervals for Polymarket price history."""
+    ONE_HOUR = "1h"
+    ONE_DAY = "1d"
+    ONE_WEEK = "1w"
+    ONE_MONTH = "1m"
+    ONE_YEAR = "1y"
+
+class VolumeDataEnum:
+    """Enumeration of volume data intervals for Polymarket price history."""
+    ONE_THOUSAND = "1000"
+    TEN_THOUSAND = "10000"
+    ONE_HUNDRED_THOUSAND = "100000"
+    ONE_MILLION = "1000000"
 
 @dataclass(frozen=True)
 class PolymarketCredentials:
@@ -63,305 +77,147 @@ class PolymarketCredentials:
     def has_l2_credentials(self) -> bool:
         return all([self.address, self.api_key, self.api_secret, self.api_passphrase])
 
-    def l2_headers(
-        self,
-        method: str,
-        request_path: str,
-        body: Any = None,
-        timestamp: int | None = None,
-    ) -> dict[str, str]:
-        """Create Polymarket L2 auth headers for authenticated CLOB requests."""
-        if not self.has_l2_credentials():
-            raise PolymarketClientError(
-                "Missing L2 credentials. Set POLYMARKET_ADDRESS, "
-                "POLYMARKET_API_KEY, POLYMARKET_API_SECRET, and "
-                "POLYMARKET_API_PASSPHRASE in polymarket.env."
-            )
 
-        ts = int(timestamp or time.time())
-        signature = _build_hmac_signature(
-            secret=str(self.api_secret),
-            timestamp=ts,
-            method=method,
-            request_path=request_path,
-            body=body,
-        )
-        return {
-            "POLY_ADDRESS": str(self.address),
-            "POLY_SIGNATURE": signature,
-            "POLY_TIMESTAMP": str(ts),
-            "POLY_API_KEY": str(self.api_key),
-            "POLY_PASSPHRASE": str(self.api_passphrase),
-        }
+class PolymarketAPIClient:
+    """Small read-only client for Polymarket using pmxt library."""
 
+    def __init__(self, credentials: PolymarketCredentials = None):
+        self.credentials = credentials or PolymarketCredentials.from_env_file(DEFAULT_ENV_PATH)
+        self.pmxt_client =  pmxt.Polymarket()
 
-@dataclass(frozen=True)
-class PolymarketToken:
-    """A tradable outcome token on a Polymarket market."""
+    def get_market_by_slug(self, slug: str):
+        """Fetch market metadata by URL slug using pmxt."""
+        try:
+            market_data = self.pmxt_client.fetch_markets(slug=slug)
+            return market_data
+        except Exception as exc:
+            raise PolymarketClientError(f"Failed to fetch market {slug!r}: {exc}") from exc
 
-    token_id: str
-    outcome: str
-
-
-@dataclass(frozen=True)
-class PolymarketMarket:
-    """Market metadata needed by the backtester."""
-
-    id: str | None
-    slug: str | None
-    question: str | None
-    condition_id: str | None
-    tokens: tuple[PolymarketToken, ...]
-    raw: dict[str, Any]
-
-    def get_token(self, outcome: str) -> PolymarketToken:
-        requested = outcome.casefold()
-        for token in self.tokens:
-            if token.outcome.casefold() == requested:
-                return token
-        available = ", ".join(token.outcome for token in self.tokens)
-        raise PolymarketClientError(
-            f"Outcome {outcome!r} not found. Available outcomes: {available}"
-        )
-
-
-class PolymarketClient:
-    """Small read-only client for Polymarket public APIs."""
-
-    def __init__(
-        self,
-        gamma_api_url: str = GAMMA_API_URL,
-        clob_api_url: str = CLOB_API_URL,
-        timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
-        env_path: str | Path | None = DEFAULT_ENV_PATH,
-        credentials: PolymarketCredentials | None = None,
-        authenticate_clob_reads: bool = False,
-    ) -> None:
-        self.gamma_api_url = gamma_api_url.rstrip("/")
-        self.clob_api_url = clob_api_url.rstrip("/")
-        self.timeout_seconds = timeout_seconds
-        self.credentials = credentials or PolymarketCredentials.from_env_file(env_path)
-        self.authenticate_clob_reads = authenticate_clob_reads
-
-    def get_market_by_slug(self, slug: str) -> PolymarketMarket:
-        """Fetch market metadata from Gamma by URL slug."""
-        payload = self._get_json(f"{self.gamma_api_url}/markets/slug/{slug}")
-        if not isinstance(payload, dict):
-            raise PolymarketClientError(f"Unexpected market payload for slug {slug!r}")
-        return self._normalize_market(payload)
-
-    def get_price_history(
-        self,
-        token_id: str,
-        start: datetime | str | int | float | None = None,
-        end: datetime | str | int | float | None = None,
-        interval: str | None = None,
-        fidelity: int | None = 1,
-    ) -> pd.DataFrame:
-        """Fetch and normalize CLOB price history for an outcome token.
-
-        Returns a dataframe with `timestamp`, `price`, and `token_id` columns.
-        `timestamp` is timezone-aware UTC and `price` is a float between 0 and 1.
-        """
-        params: dict[str, str | int] = {"market": token_id}
-        start_ts = self._to_unix_seconds(start)
-        end_ts = self._to_unix_seconds(end)
-
-        if start_ts is not None:
-            params["startTs"] = start_ts
-        if end_ts is not None:
-            params["endTs"] = end_ts
-        if interval:
-            params["interval"] = interval
-        if fidelity is not None:
-            params["fidelity"] = fidelity
-
-        payload = self._get_json(
-            f"{self.clob_api_url}/prices-history",
-            params=params,
-            authenticated=self.authenticate_clob_reads,
-        )
-        history = payload.get("history") if isinstance(payload, dict) else None
-        if not isinstance(history, list):
-            raise PolymarketClientError("Unexpected price history response")
-
-        df = pd.DataFrame(history)
-        if df.empty:
-            return pd.DataFrame(columns=["timestamp", "price", "token_id"])
-
-        missing_columns = {"t", "p"} - set(df.columns)
-        if missing_columns:
-            raise PolymarketClientError(f"Price history missing columns: {missing_columns}")
-
-        df = df.rename(columns={"t": "timestamp", "p": "price"})
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
-        df["price"] = pd.to_numeric(df["price"], errors="coerce")
-        df["token_id"] = token_id
-        df = df.dropna(subset=["timestamp", "price"])
-        df = df.sort_values("timestamp").drop_duplicates("timestamp").reset_index(drop=True)
-        return df[["timestamp", "price", "token_id"]]
-
-    def get_outcome_price_history(
-        self,
-        market_slug: str,
-        outcome: str = "Yes",
-        start: datetime | str | int | float | None = None,
-        end: datetime | str | int | float | None = None,
-        interval: str | None = "all",
-        fidelity: int | None = 1,
-    ) -> tuple[PolymarketMarket, PolymarketToken, pd.DataFrame]:
+    def get_price_history_by_outcome(self, market_slug: str, desired_outcome: str = "Yes",
+                                     start: datetime = None, end: datetime = None,
+                                     fidelity: int = 1, interval: TickDataEnum = TickDataEnum.ONE_DAY) -> pd.DataFrame:
         """Resolve an outcome token for a market slug and fetch its history."""
         market = self.get_market_by_slug(market_slug)
-        token = market.get_token(outcome)
-        history = self.get_price_history(
-            token.token_id,
-            start=start,
-            end=end,
-            interval=interval,
+
+        
+        # Determine the outcome token ID based on the desired outcome label (e.g., "Yes" or "No")
+        # The market response contains a label with the work "Not" in it for the "No" outcome, 
+        # so we can use that to identify the correct token.
+        outcomes = market[0].outcomes
+        for outcome in outcomes:
+            print(outcome.label)
+            if "Not" not in outcome.label and desired_outcome == "Yes":
+                token = outcome.outcome_id
+                break
+            elif "Not" in outcome.label and desired_outcome == "No":
+                token = outcome.outcome_id
+                break
+        
+        # Grab the datetime when the market resolved, so we can use that as the end time for fetching price history.
+        resolved_date = market[0].resolution_date
+  
+        history = self._get_price_history(
+            token,
+            resolved_date,
+            start_date=start,
             fidelity=fidelity,
+            interval=interval,
         )
-        return market, token, history
+        return history
+    
+    def get_price_history_by_outcome_volume_candles(self, market_slug: str, desired_outcome: str = "Yes",
+                                     start: datetime = None, end: datetime = None,
+                                     fidelity: int = 1, volume_interval: TickDataEnum = VolumeDataEnum.ONE_THOUSAND) -> pd.DataFrame:
+        """Resolve an outcome token for a market slug and fetch its history."""
+        market = self.get_market_by_slug(market_slug)
+        # Determine the outcome token ID based on the desired outcome label (e.g., "Yes" or "No")
+        # The market response contains a label with the work "Not" in it for the "No" outcome, 
+        # so we can use that to identify the correct token.
+        outcomes = market[0].outcomes
+        for outcome in outcomes:
+            print(outcome.label)
+            if "Not" not in outcome.label and desired_outcome == "Yes":
+                token = outcome.outcome_id
+                break                        
+            elif "Not" in outcome.label and desired_outcome == "No":
+                token = outcome.outcome_id
+                break
+        # Grab the datetime when the market resolved, so we can use that as the end time for fetching price history.
+        resolved_date = market[0].resolution_date
+        history = self._get_price_history(
+            token,
+            resolved_date,
+            start_date=start,
+            fidelity=volume_interval,
+            interval=TickDataEnum.ONE_DAY,
+        )
+        return history
 
-    def get_both_outcomes_price_history(
-        self,
-        market_slug: str,
-        start: datetime | str | int | float | None = None,
-        end: datetime | str | int | float | None = None,
-        interval: str | None = None,
-        fidelity: int | None = 1,
-    ) -> pd.DataFrame:
-        """Fetch price history for both Yes and No outcomes in a single dataframe.
-        
-        Returns:
-            DataFrame with columns: timestamp, price, token_id, outcome.
-            The 'outcome' column contains 1 for "Yes" and 0 for "No".
+
+    def _get_price_history(self, token_id: str, resolved_date=None, start_date: datetime = None,
+                            fidelity: int = 1, chunk_days: int = 15, interval: TickDataEnum = TickDataEnum.ONE_DAY) -> pd.DataFrame:
+        """Fetch price history for an outcome token using multiple paginated requests.
+
+        Iterates from start_date to resolved_date in chunk_days increments, concatenating results.
+        Returns a dataframe with `timestamp`, `price`, and `token_id` columns.
         """
-        dfs = []
-        for outcome_name, outcome_value in [("Yes", 1), ("No", 0)]:
-            market, token, history = self.get_outcome_price_history(
-                market_slug=market_slug,
-                outcome=outcome_name,
-                start=start,
-                end=end,
-                interval=interval,
-                fidelity=fidelity,
-            )
-            history["outcome"] = outcome_value
-            dfs.append(history)
-        
-        combined = pd.concat(dfs, ignore_index=True)
-        return combined.sort_values("timestamp").reset_index(drop=True)
-
-    def _get_json(
-        self,
-        url: str,
-        params: dict[str, Any] | None = None,
-        authenticated: bool = False,
-    ) -> Any:
-        query = f"?{urlencode(params)}" if params else ""
-        headers = {
-            "Accept": "application/json",
-            "User-Agent": "SystematicTrader/0.1",
-        }
-        if authenticated:
-            headers.update(self.credentials.l2_headers("GET", self._request_path(url, query)))
-
-        request = Request(
-            f"{url}{query}",
-            headers=headers,
-        )
-
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            details = exc.read().decode("utf-8", errors="replace")
-            raise PolymarketClientError(f"Polymarket HTTP {exc.code}: {details}") from exc
-        except (URLError, TimeoutError) as exc:
-            raise PolymarketClientError(f"Could not reach Polymarket: {exc}") from exc
-        except json.JSONDecodeError as exc:
-            raise PolymarketClientError("Polymarket returned invalid JSON") from exc
+            end_dt = resolved_date
+            if isinstance(end_dt, str):
+                end_dt = datetime.fromisoformat(end_dt.replace("Z", "+00:00"))
+            if end_dt is None:
+                end_dt = datetime.now(tz=timezone.utc)
+            if end_dt.tzinfo is None:
+                end_dt = end_dt.replace(tzinfo=timezone.utc)
 
-    def _post_json(
-        self,
-        url: str,
-        body: dict[str, Any] | list[Any] | None = None,
-        authenticated: bool = True,
-    ) -> Any:
-        serialized_body = json.dumps(body or {}, separators=(",", ":"))
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "SystematicTrader/0.1",
-        }
-        if authenticated:
-            headers.update(
-                self.credentials.l2_headers(
-                    "POST",
-                    self._request_path(url),
-                    body=serialized_body,
+            start_dt = start_date
+            if start_dt is None:
+                start_dt = end_dt - timedelta(days=365)
+            if isinstance(start_dt, str):
+                start_dt = datetime.fromisoformat(start_dt.replace("Z", "+00:00"))
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=timezone.utc)
+
+            chunk_size = timedelta(days=chunk_days)
+            all_frames = []
+            chunk_start = start_dt
+
+            while chunk_start < end_dt:
+                chunk_end = min(chunk_start + chunk_size, end_dt)
+
+                history_data = self.pmxt_client.fetch_ohlcv(
+                    outcome_id=token_id,
+                    resolution=interval,
+                    fidelity=fidelity,
+                    start=chunk_start,
+                    end=chunk_end,
                 )
-            )
 
-        request = Request(
-            url,
-            data=serialized_body.encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
+                if history_data:
+                    all_frames.append(pd.DataFrame(history_data))
 
-        try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            details = exc.read().decode("utf-8", errors="replace")
-            raise PolymarketClientError(f"Polymarket HTTP {exc.code}: {details}") from exc
-        except (URLError, TimeoutError) as exc:
-            raise PolymarketClientError(f"Could not reach Polymarket: {exc}") from exc
-        except json.JSONDecodeError as exc:
-            raise PolymarketClientError("Polymarket returned invalid JSON") from exc
+                chunk_start = chunk_end
 
-    def _normalize_market(self, payload: dict[str, Any]) -> PolymarketMarket:
-        outcomes = self._decode_jsonish_list(payload.get("outcomes"))
-        token_ids = self._decode_jsonish_list(payload.get("clobTokenIds"))
+            if not all_frames:
+                return pd.DataFrame(columns=["timestamp", "price", "token_id"])
 
-        if len(outcomes) != len(token_ids):
-            raise PolymarketClientError(
-                "Market outcomes and clobTokenIds have different lengths"
-            )
-        if not token_ids:
-            raise PolymarketClientError("Market has no CLOB token ids")
+            df = pd.concat(all_frames, ignore_index=True)
 
-        tokens = tuple(
-            PolymarketToken(token_id=str(token_id), outcome=str(outcome))
-            for outcome, token_id in zip(outcomes, token_ids)
-        )
+            if df.empty:
+                return pd.DataFrame(columns=["timestamp", "price", "token_id"])
 
-        return PolymarketMarket(
-            id=self._optional_str(payload.get("id")),
-            slug=self._optional_str(payload.get("slug")),
-            question=self._optional_str(payload.get("question")),
-            condition_id=self._optional_str(
-                payload.get("conditionId") or payload.get("condition_id")
-            ),
-            tokens=tokens,
-            raw=payload,
-        )
+            df["outcome_id"] = token_id
+            df['timestamp_formatted'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
+            
+            print("requested start and end:", start_dt, end_dt)
 
-    @staticmethod
-    def _decode_jsonish_list(value: Any) -> list[Any]:
-        if value is None:
-            return []
-        if isinstance(value, list):
-            return value
-        if isinstance(value, str):
-            try:
-                decoded = json.loads(value)
-            except json.JSONDecodeError as exc:
-                raise PolymarketClientError(f"Could not decode list field: {value}") from exc
-            if isinstance(decoded, list):
-                return decoded
-        raise PolymarketClientError(f"Expected list-like field, got {type(value).__name__}")
+            return df
+
+        except PolymarketClientError:
+            raise
+        except Exception as exc:
+            raise PolymarketClientError(f"Failed to fetch price history: {exc}")
+        
 
     @staticmethod
     def _optional_str(value: Any) -> str | None:
@@ -375,21 +231,17 @@ class PolymarketClient:
             return int(value)
         if isinstance(value, str):
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return int(parsed.timestamp())
+        if isinstance(value, datetime):
+            return int(value.timestamp())
         else:
             parsed = value
+        
+        raise PolymarketClientError(f"Cannot convert {type(value).__name__} to unix timestamp")
+    
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return int(parsed.timestamp())
-
-    @staticmethod
-    def _request_path(url: str, query: str = "") -> str:
-        marker = "://"
-        if marker in url:
-            path_start = url.find("/", url.find(marker) + len(marker))
-            path = url[path_start:] if path_start >= 0 else "/"
-        else:
-            path = url
-        return f"{path}{query}"
 
 
 def _load_env_file(env_path: str | Path | None) -> dict[str, str]:
@@ -412,25 +264,3 @@ def _load_env_file(env_path: str | Path | None) -> dict[str, str]:
         if key:
             values[key] = value
     return values
-
-
-def _build_hmac_signature(
-    secret: str,
-    timestamp: int,
-    method: str,
-    request_path: str,
-    body: Any = None,
-) -> str:
-    try:
-        decoded_secret = base64.urlsafe_b64decode(secret)
-    except Exception as exc:
-        raise PolymarketClientError(
-            "POLYMARKET_API_SECRET must be the base64-encoded API secret from Polymarket."
-        ) from exc
-
-    message = f"{timestamp}{method}{request_path}"
-    if body:
-        message += str(body).replace("'", '"')
-
-    digest = hmac.new(decoded_secret, message.encode("utf-8"), hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(digest).decode("utf-8")

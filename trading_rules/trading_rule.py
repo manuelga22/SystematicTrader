@@ -1,7 +1,7 @@
 from abc import abstractmethod
-from market_data import MarketData
-from position_data import PositionData
-from signals import TradingSignal
+from trading_rules.market_data import MarketData
+from trading_rules.position_data import PositionData
+from trading_rules.signals import TradingSignal
 
 class TradingRule:
     """Base class for trading strategies."""

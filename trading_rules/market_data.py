@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 PRICE = 'price'
 
@@ -15,6 +16,14 @@ class MarketData:
     
     def get_mean(self, window):
         return self.df[PRICE].rolling(window=window).mean().iloc[-1]
-
-    def __repr__(self):
-        return f"MarketData(symbol={self.symbol}, price={self.price}, volume={self.volume})"
+    
+    def get_std(self, window):
+        return self.df[PRICE].rolling(window=window).std().iloc[-1]
+    
+    def get_returns(self, column="close"):
+        self.df['returns'] = self.df[column].pct_change()
+        return self.df['returns']
+    
+    def get_log_returns(self, column="close"):
+        self.df['log_returns'] = np.log(self.df[column] / self.df[column].shift(1))
+        return self.df['log_returns']
