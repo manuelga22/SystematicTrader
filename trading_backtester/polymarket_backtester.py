@@ -24,34 +24,20 @@ MARKET_SLUG = "will-jesus-christ-return-in-2025"
 FIDELITY_MINUTES = 1
 
 
-def get_jesus_return_price_history(market_slug: str = MARKET_SLUG, interval: str = "all") -> pd.DataFrame:
-    """Fetch historical prices for the Yes side of the Jesus return market."""
-    client = PolymarketAPIClient()
-    prices = client.get_both_outcomes_price_history(
-        market_slug=market_slug,
-        interval=interval,
-        fidelity=FIDELITY_MINUTES,
-    )
-
-    return prices[0]
-
 
 if __name__ == "__main__":
 
-    price_data = get_jesus_return_price_history()
+    client = PolymarketAPIClient()
 
-    price_data = parse_timestamp(price_data)
+    market = client.get_price_history_by_outcome(MARKET_SLUG, desired_outcome="No")
 
-    print(price_data['price'])
-    
-    market_data = MarketData(price_data)
+    market_data = MarketData(market)
     positions = Positions(cash=1000.0)
     mean_reversal_rule = MeanReversal()
 
+    positions = perform_mean_reversal_backtest(market_data, positions)
 
-    positions = perform_mean_reversal_backtest(mean_reversal_rule, market_data, positions)
-
-    print(len(positions.trade_history))
+    print(positions.trade_history)
 
 
 

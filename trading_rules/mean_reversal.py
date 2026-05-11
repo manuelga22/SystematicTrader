@@ -25,7 +25,7 @@ class MeanReversal(TradingRule):
     - entry_z_threshold_sell: Z-score level above which to generate SELL signal (typically positive, e.g., 2.0)
     """
     
-    def __init__(self, lookback_window=20, entry_z_threshold_buy=-2.0, entry_z_threshold_sell=2.0):
+    def __init__(self, lookback_window=20, entry_z_threshold_entry=2.0, exit_z_threshold=0.5):
         """
         Initialize the Z-Score Mean Reversion trading rule.
         
@@ -37,10 +37,10 @@ class MeanReversal(TradingRule):
                                    Typically positive; higher = more extreme, fewer trades
         """
         self.lookback_window = lookback_window
-        self.entry_z_threshold_buy = entry_z_threshold_buy
-        self.entry_z_threshold_sell = entry_z_threshold_sell
+        self.entry_z_threshold = entry_z_threshold_entry
+        self.exit_z_threshold = exit_z_threshold
 
-    def generate_signal(self, market_data: MarketData, positions_data: Positions) -> TradingSignal:
+    def generate_signal_z_score(self, market_data: MarketData, positions_data: Positions) -> TradingSignal:
         """
         Generate entry signals based on z-score deviation from mean.
         
@@ -58,14 +58,21 @@ class MeanReversal(TradingRule):
             return TradingSignalEnum.NONE
         
         z_score = self.calculate_z_score(current_price, mean, std)
-        
-        # Entry signals only (exit handled by separate rule)
-        if z_score <= self.entry_z_threshold_buy and not positions_data.are_we_holding_positions():
-            return TradingSignalEnum.BUY
-        elif z_score >= self.entry_z_threshold_sell and positions_data.are_we_holding_positions():
-            return TradingSignalEnum.SELL
+
+        if positions_data.are_we_holding_positions():
+            
+            if z_score <= self.exit_z_threshold:
+                return TradingSignalEnum.SELL
+            else:
+                return TradingSignalEnum.HOLD
         else:
-            return TradingSignalEnum.NONE
+
+            if z_score <= -self.entry_z_threshold:
+                return TradingSignalEnum.BUY
+            else:
+                return TradingSignalEnum.HOLD
+
+    
 
 
     def calculate_z_score(self, price: float, mean: float, std: float) -> float:
