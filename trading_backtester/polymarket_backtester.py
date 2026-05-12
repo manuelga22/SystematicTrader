@@ -11,11 +11,8 @@ sys.path.insert(0, project_root)
 sys.path.insert(0, trading_rules_dir)
 
 import pandas as pd
-
 from util.polymarket_client import PolymarketAPIClient
-from util.data_processor import parse_timestamp
 from trading_rules.position_data import Positions
-from trading_rules.mean_reversal import MeanReversal
 from trading_rules.market_data import MarketData
 from util.backtester import perform_mean_reversal_backtest
 
@@ -33,11 +30,12 @@ if __name__ == "__main__":
 
     market_data = MarketData(market)
     positions = Positions(cash=1000.0)
-    mean_reversal_rule = MeanReversal()
 
     positions = perform_mean_reversal_backtest(market_data, positions)
 
-    print(positions.trade_history)
+    positions_df = positions.get_returns_from_trade_history()
+
+    print(positions_df)
 
 
 

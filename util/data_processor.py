@@ -12,3 +12,5 @@ def parse_timestamp(df: pd.DataFrame, timestamp_column: str = "timestamp") -> pd
     df["minute"] = df[timestamp_column].dt.minute
     
     return df
+
+    

@@ -209,6 +209,9 @@ class PolymarketAPIClient:
             df["outcome_id"] = token_id
             df['timestamp_formatted'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
             
+            # set timestamp_formatted to be the index
+            df.set_index('timestamp_formatted', inplace=True)
+            
             print("requested start and end:", start_dt, end_dt)
 
             return df

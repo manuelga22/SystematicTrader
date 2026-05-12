@@ -3,6 +3,12 @@ from trading_rules.timeframes import TimeframesEnum
 from trading_rules.market_data import MarketData
 from trading_rules.position_data import Positions
 from trading_rules.signals import TradingSignalEnum, TradingSignal
+class HoldingTimeEnumMinutes:
+    SIXTY_MINUTES = 60
+    ONE_DAY = 1440
+    TWO_DAYS = 2880
+    ONE_WEEK = 10080
+
 
 class MeanReversal(TradingRule):
     DESCRIPTION = """Z-Score based Mean Reversion trading rule.
@@ -39,6 +45,38 @@ class MeanReversal(TradingRule):
         self.lookback_window = lookback_window
         self.entry_z_threshold = entry_z_threshold_entry
         self.exit_z_threshold = exit_z_threshold
+
+    def generate_signal_buy_at_entry_sell_after_time(self, 
+                                                     market_data: MarketData, 
+                                                     positions_data: Positions,
+                                                     holding_time=HoldingTimeEnumMinutes.ONE_DAY) -> TradingSignal:
+        """
+        Generate entry signals based on z-score deviation from mean.
+        
+        Returns:
+            BUY if z-score <= entry_z_threshold_buy
+            SELL if z-score >= entry_z_threshold_sell
+            NONE otherwise
+        """
+        
+        # Find lowest price seen in the lookback window
+        lowest_price = market_data.get_lowest_price(self.lookback_window)
+        current_price = market_data.get_latest_price()
+        
+        if not positions_data.are_we_holding_positions():
+
+            if current_price <= lowest_price:
+                return TradingSignalEnum.BUY
+            else:
+                return TradingSignalEnum.HOLD
+            
+        else:
+
+            # If we are holding a position, check if we should exit based on time
+            if positions_data.get_holding_time_minutes(market_data.get_latest_timestamp()) >= holding_time:
+                return TradingSignalEnum.SELL
+            else:
+                return TradingSignalEnum.HOLD
 
     def generate_signal_z_score(self, market_data: MarketData, positions_data: Positions) -> TradingSignal:
         """

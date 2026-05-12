@@ -14,6 +14,12 @@ class MarketData:
     def get_latest_price(self):
         return self.df[PRICE].iloc[-1]
     
+    def get_lowest_price(self, window):
+        return self.df[PRICE].rolling(window=window).min().iloc[-1]
+    
+    def get_latest_timestamp(self):
+        return self.df.index[-1]
+    
     def get_mean(self, window):
         return self.df[PRICE].rolling(window=window).mean().iloc[-1]
     
