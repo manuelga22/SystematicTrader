@@ -33,3 +33,7 @@ class MarketData:
     def get_log_returns(self, column="close"):
         self.df['log_returns'] = np.log(self.df[column] / self.df[column].shift(1))
         return self.df['log_returns']
+    
+    def get_price_at_time(self, symbol: str, ts: pd.Timestamp) -> float:
+        symbol_prices = self.df.loc[self.df['symbol'] == symbol, PRICE]
+        return symbol_prices.asof(ts)

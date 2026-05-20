@@ -46,37 +46,36 @@ class MeanReversal(TradingRule):
         self.entry_z_threshold = entry_z_threshold_entry
         self.exit_z_threshold = exit_z_threshold
 
-    def generate_signal_buy_at_entry_sell_after_time(self, 
-                                                     market_data: MarketData, 
+    def generate_signal_buy_at_entry_sell_after_time(self,
+                                                     market_data: MarketData,
                                                      positions_data: Positions,
                                                      holding_time=HoldingTimeEnumMinutes.ONE_DAY) -> TradingSignal:
         """
-        Generate entry signals based on z-score deviation from mean.
-        
-        Returns:
-            BUY if z-score <= entry_z_threshold_buy
-            SELL if z-score >= entry_z_threshold_sell
-            NONE otherwise
+        Generate entry signals based on X-day rolling minimum (paper strategy).
+
+        Entry: BUY when current price <= minimum of lookback window (new period low).
+        Exit: SELL after holding_time minutes have elapsed.
         """
-        
-        # Find lowest price seen in the lookback window
-        lowest_price = market_data.get_lowest_price(self.lookback_window)
         current_price = market_data.get_latest_price()
-        
-        if not positions_data.are_we_holding_positions():
+        current_timestamp = market_data.get_latest_timestamp()
 
-            if current_price <= lowest_price:
-                return TradingSignalEnum.BUY
-            else:
-                return TradingSignalEnum.HOLD
-            
-        else:
-
-            # If we are holding a position, check if we should exit based on time
-            if positions_data.get_holding_time_minutes(market_data.get_latest_timestamp()) >= holding_time:
+        if positions_data.are_we_holding_positions():
+            holding_time_minutes = positions_data.get_holding_time_minutes(current_timestamp)
+            if holding_time_minutes >= holding_time:
                 return TradingSignalEnum.SELL
             else:
                 return TradingSignalEnum.HOLD
+        else:
+            # Buy when current bar makes a new X-day low (paper: "price at or below X-day rolling min")
+            window_prices = market_data.df['close'].iloc[:-1]
+            if len(window_prices) == 0:
+                return TradingSignalEnum.HOLD
+            if current_price <= window_prices.min():
+                return TradingSignalEnum.BUY
+            else:
+                return TradingSignalEnum.HOLD
+                
+        
 
     def generate_signal_z_score(self, market_data: MarketData, positions_data: Positions) -> TradingSignal:
         """
@@ -109,9 +108,6 @@ class MeanReversal(TradingRule):
                 return TradingSignalEnum.BUY
             else:
                 return TradingSignalEnum.HOLD
-
-    
-
 
     def calculate_z_score(self, price: float, mean: float, std: float) -> float:
         """

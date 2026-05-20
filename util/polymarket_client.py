@@ -15,6 +15,7 @@ from typing import Any
 
 import pandas as pd
 from pmxt import Polymarket as PMXTClient
+from util.data_processor import TickDataIntervalEnum
 
 DEFAULT_ENV_PATH = Path(__file__).resolve().parents[1] / "polymarket.env"
 
@@ -31,14 +32,6 @@ interval_seconds_map = {
     "4h": 14400,
     "1d": 86400,
 }
-
-class TickDataEnum:
-    """Enumeration of tick data intervals for Polymarket price history."""
-    ONE_HOUR = "1h"
-    ONE_DAY = "1d"
-    ONE_WEEK = "1w"
-    ONE_MONTH = "1m"
-    ONE_YEAR = "1y"
 
 class VolumeDataEnum:
     """Enumeration of volume data intervals for Polymarket price history."""
@@ -95,7 +88,7 @@ class PolymarketAPIClient:
 
     def get_price_history_by_outcome(self, market_slug: str, desired_outcome: str = "Yes",
                                      start: datetime = None, end: datetime = None,
-                                     fidelity: int = 1, interval: TickDataEnum = TickDataEnum.ONE_DAY) -> pd.DataFrame:
+                                     fidelity: int = 1, interval: TickDataIntervalEnum = TickDataIntervalEnum.ONE_DAY) -> pd.DataFrame:
         """Resolve an outcome token for a market slug and fetch its history."""
         market = self.get_market_by_slug(market_slug)
 
@@ -127,7 +120,7 @@ class PolymarketAPIClient:
     
     def get_price_history_by_outcome_volume_candles(self, market_slug: str, desired_outcome: str = "Yes",
                                      start: datetime = None, end: datetime = None,
-                                     fidelity: int = 1, volume_interval: TickDataEnum = VolumeDataEnum.ONE_THOUSAND) -> pd.DataFrame:
+                                     fidelity: int = 1, volume_interval: TickDataIntervalEnum = VolumeDataEnum.ONE_THOUSAND) -> pd.DataFrame:
         """Resolve an outcome token for a market slug and fetch its history."""
         market = self.get_market_by_slug(market_slug)
         # Determine the outcome token ID based on the desired outcome label (e.g., "Yes" or "No")
@@ -149,13 +142,13 @@ class PolymarketAPIClient:
             resolved_date,
             start_date=start,
             fidelity=volume_interval,
-            interval=TickDataEnum.ONE_DAY,
+            interval=TickDataIntervalEnum.ONE_DAY,
         )
         return history
 
 
     def _get_price_history(self, token_id: str, resolved_date=None, start_date: datetime = None,
-                            fidelity: int = 1, chunk_days: int = 15, interval: TickDataEnum = TickDataEnum.ONE_DAY) -> pd.DataFrame:
+                            fidelity: int = 1, chunk_days: int = 15, interval: TickDataIntervalEnum = TickDataIntervalEnum.ONE_DAY) -> pd.DataFrame:
         """Fetch price history for an outcome token using multiple paginated requests.
 
         Iterates from start_date to resolved_date in chunk_days increments, concatenating results.
@@ -221,7 +214,7 @@ class PolymarketAPIClient:
         except Exception as exc:
             raise PolymarketClientError(f"Failed to fetch price history: {exc}")
         
-
+    
     @staticmethod
     def _optional_str(value: Any) -> str | None:
         return None if value is None else str(value)
