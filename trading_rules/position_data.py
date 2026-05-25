@@ -111,9 +111,19 @@ class Positions:
     def get_transaction_history(self) -> list[PositionData]:
         return self.positions_stack
     
+    def get_transaction_history_df(self) -> pd.DataFrame:
+
+        if not self.positions_stack:
+            return pd.DataFrame()
+
+        transations = [t.to_dict() for t in self.positions_stack]
+
+        return pd.DataFrame(transations)
+
+    
     def get_holding_time_minutes(self, symbol: str, current_time_timestamp: pd.Timestamp) -> int:
         """Calculate holding time in minutes for the current open position(s).
-        This will give you the holding time of the oldest transaction for a given stock.
+        This will give you the holding time of the newest transaction for a given stock.
         """
 
         if self.stock_quantity_dict.get(symbol) is None or self.stock_quantity_dict.get(symbol) == 0:
@@ -122,17 +132,16 @@ class Positions:
         if type(current_time_timestamp) is not pd.Timestamp:
             raise ValueError("current_time_timestamp must be a pandas Timestamp")
         
-        oldest_transaction = None
-        for transactions in self.positions_stack:
+        newest_transaction = None
+        for transactions in reversed(self.positions_stack):
             if transactions.symbol == symbol:
-                oldest_transaction = transactions
+                newest_transaction = transactions
                 break
 
-        if oldest_transaction is None:
+        if newest_transaction is None:
             raise Exception(f"Transaction not found for {symbol}")
 
-
-        holding_time_minutes = (current_time_timestamp - oldest_transaction.timestamp).total_seconds() / 60
+        holding_time_minutes = (current_time_timestamp - newest_transaction.timestamp).total_seconds() / 60
         return holding_time_minutes
     
     def get_holdings_at_time(self, ts: pd.Timestamp) -> dict:

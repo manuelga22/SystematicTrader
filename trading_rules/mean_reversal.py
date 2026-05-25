@@ -59,23 +59,29 @@ class MeanReversal(TradingRule):
         """
         current_price = market_data.get_latest_price()
         current_timestamp = market_data.get_latest_timestamp()
+        
+        min_price = 9999
 
-        if positions_data.are_we_holding_positions():
-            holding_time_minutes = positions_data.get_holding_time_minutes(symbol=symbol,
-                                                                           current_time_timestamp=current_timestamp)
-            if holding_time_minutes >= holding_time:
-                return TradingSignalEnum.SELL
+        for candle in market_data.df.iterrows():
+
+            if min_price > candle.close
+
+            if positions_data.are_we_holding_positions():
+                holding_time_minutes = positions_data.get_holding_time_minutes(symbol=symbol,
+                                                                               current_time_timestamp=current_timestamp)
+                if holding_time_minutes >= holding_time:
+                    return TradingSignalEnum.SELL
+                else:
+                    return TradingSignalEnum.HOLD
             else:
-                return TradingSignalEnum.HOLD
-        else:
-            # Buy when current bar makes a new X-day low (paper: "price at or below X-day rolling min")
-            window_prices = market_data.df['close'].iloc[:-1]
-            if len(window_prices) == 0:
-                return TradingSignalEnum.HOLD
-            if current_price <= window_prices.min():
-                return TradingSignalEnum.BUY
-            else:
-                return TradingSignalEnum.HOLD
+                # Buy when current bar makes a new X-day low (paper: "price at or below X-day rolling min")
+                window_prices = market_data.df['close'].iloc[-(self.lookback_window + 1):-1]
+                if len(window_prices) == 0:
+                    return TradingSignalEnum.HOLD
+                if current_price <= window_prices.min():
+                    return TradingSignalEnum.BUY
+                else:
+                    return TradingSignalEnum.HOLD
                 
         
 

@@ -35,10 +35,6 @@ class PortfolioPerformance:
             newest_transaction_for_t = self._find_newest_transaction_before(trades, time)
             holdings_dict = self.positions.get_holdings_at_time(time)
 
-            # if holdings_dict == {}:
-            #     print("Holdings are empty")
-            #     continue
-
             portfolio_value = 0
             for sym, quantity in holdings_dict.items():
                 sym_price_at_ts = self.market_data.get_price_at_time(sym, time)
