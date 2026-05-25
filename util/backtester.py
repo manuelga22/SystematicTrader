@@ -7,7 +7,10 @@ from trading_rules.position_data import Positions
 from trading_rules.signals import TradingSignalEnum
 
 
-def perform_mean_reversal_backtest(rule: MeanReversal, market_data: MarketData, positions: Positions):
+def perform_mean_reversal_backtest(symbol:str, 
+                                   rule: MeanReversal,
+                                   market_data: MarketData, 
+                                   positions: Positions):
 
     index = market_data.df.index
 
@@ -24,13 +27,29 @@ def perform_mean_reversal_backtest(rule: MeanReversal, market_data: MarketData, 
         current_window = market_data.df.iloc[start_ts: i + 1]
         current_window_data = MarketData(current_window)
 
-        signal = rule.generate_signal_buy_at_entry_sell_after_time(current_window_data,
-                                                                   positions,
+        signal = rule.generate_signal_buy_at_entry_sell_after_time(symbol=symbol,
+                                                                   market_data=current_window_data,
+                                                                   positions_data=positions,
                                                                    holding_time=HoldingTimeEnumMinutes.ONE_DAY)
 
+
         if signal.value is TradingSignalEnum.BUY.value:
-            positions.buy_position("TEST", quantity=1, entry_price=current_window_data.get_latest_price(), timestmap=current_window_data.df.index[-1])
+
+            price = current_window_data.get_latest_price()
+            quantity = positions.get_available_cash() // price
+            if quantity > 0:
+                positions.buy_position(symbol=symbol,
+                                       quantity=quantity,
+                                       entry_price=price,
+                                       timestamp=current_window_data.get_latest_timestamp())
+
         elif signal.value is TradingSignalEnum.SELL.value:
-            positions.sell_position("TEST", current_price=current_window_data.get_latest_price(), timestamp=current_window_data.get_latest_timestamp())
+
+            quantity = positions.stock_quantity_dict.get(symbol, 0)
+            if quantity > 0:
+                positions.sell_position(symbol=symbol,
+                                        quantity=quantity,
+                                        current_price=current_window_data.get_latest_price(),
+                                        timestamp=current_window_data.get_latest_timestamp())
 
     return positions

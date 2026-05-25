@@ -47,6 +47,7 @@ class MeanReversal(TradingRule):
         self.exit_z_threshold = exit_z_threshold
 
     def generate_signal_buy_at_entry_sell_after_time(self,
+                                                     symbol: str,
                                                      market_data: MarketData,
                                                      positions_data: Positions,
                                                      holding_time=HoldingTimeEnumMinutes.ONE_DAY) -> TradingSignal:
@@ -60,7 +61,8 @@ class MeanReversal(TradingRule):
         current_timestamp = market_data.get_latest_timestamp()
 
         if positions_data.are_we_holding_positions():
-            holding_time_minutes = positions_data.get_holding_time_minutes(current_timestamp)
+            holding_time_minutes = positions_data.get_holding_time_minutes(symbol=symbol,
+                                                                           current_time_timestamp=current_timestamp)
             if holding_time_minutes >= holding_time:
                 return TradingSignalEnum.SELL
             else:

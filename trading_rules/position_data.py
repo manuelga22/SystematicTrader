@@ -134,17 +134,6 @@ class Positions:
 
         holding_time_minutes = (current_time_timestamp - oldest_transaction.timestamp).total_seconds() / 60
         return holding_time_minutes
-        
-    def get_returns_from_trade_history(self) -> pd.DataFrame:
-        """Calculate returns from trade history."""
-        positions_df = self.parse_positions()
-        returns = []
-
-        for _, row in positions_df.iterrows():
-            returns.append((row["sold_price"] - row["entry_price"]) / row["entry_price"])
-
-        positions_df["returns"] = returns
-        return positions_df
     
     def get_holdings_at_time(self, ts: pd.Timestamp) -> dict:
 
@@ -159,10 +148,11 @@ class Positions:
                 else:
                     holding_dict[sym] = holding_dict.get(sym, 0) - pos.get_quantity()
             else:
+                # timestamps of positions are in ascending order, so once we find a position
+                # that happens after ts, we can break.
                 break
 
         return holding_dict
-
         
     def show_positions(self) -> list:
         for pos in self.positions:
@@ -172,26 +162,5 @@ class Positions:
             print("No open positions.")
 
         return self.positions
-    
-    def parse_positions(self) -> pd.DataFrame:
-        """Parse positions into a dataframe for easier analysis."""
-        data = []
-        for pos in range(0, len(self.trade_history), 2):  # Step by 2 to get buy-sell pairs
-            try:
-                pos_pair = self.trade_history[pos: pos + 2]
-                data.append({
-                    "symbol": pos_pair[0].symbol,
-                    "quantity": pos_pair[0].quantity,
-                    "entry_price": pos_pair[0].entry_price,
-                    "sold_price": pos_pair[1].entry_price if pos_pair[1] else None,
-                    "entry_timestamp": pos_pair[0].timestamp,
-                    "exit_timestamp": pos_pair[1].timestamp if pos_pair[1] else None,
-                })
-            except IndexError:
-                print("Index out of range")
-                continue
-
-        df = pd.DataFrame(data)
-        return df
 
     
