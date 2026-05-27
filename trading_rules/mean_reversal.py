@@ -1,6 +1,8 @@
+import pandas as pd
+
 from trading_rules.trading_rule import TradingRule
 from trading_rules.timeframes import TimeframesEnum
-from trading_rules.market_data import MarketData
+from trading_rules.market_data import MarketData, PRICE
 from trading_rules.position_data import Positions
 from trading_rules.signals import TradingSignalEnum, TradingSignal
 class HoldingTimeEnumMinutes:
@@ -57,32 +59,32 @@ class MeanReversal(TradingRule):
         Entry: BUY when current price <= minimum of lookback window (new period low).
         Exit: SELL after holding_time minutes have elapsed.
         """
+        if market_data.df.empty:
+            return TradingSignalEnum.HOLD
+
+        # Check we are looking at a window with at least "lookback window" days
+        # worth of data.
+        days_of_data = market_data.df.index.normalize().nunique()
+        if days_of_data < self.lookback_window:
+            return TradingSignalEnum.HOLD
+
         current_price = market_data.get_latest_price()
         current_timestamp = market_data.get_latest_timestamp()
-        
-        min_price = 9999
 
-        for candle in market_data.df.iterrows():
+        min_price = market_data.df[PRICE].iloc[:-1].min()
 
-            if min_price > candle.close
 
-            if positions_data.are_we_holding_positions():
-                holding_time_minutes = positions_data.get_holding_time_minutes(symbol=symbol,
-                                                                               current_time_timestamp=current_timestamp)
-                if holding_time_minutes >= holding_time:
-                    return TradingSignalEnum.SELL
-                else:
-                    return TradingSignalEnum.HOLD
-            else:
-                # Buy when current bar makes a new X-day low (paper: "price at or below X-day rolling min")
-                window_prices = market_data.df['close'].iloc[-(self.lookback_window + 1):-1]
-                if len(window_prices) == 0:
-                    return TradingSignalEnum.HOLD
-                if current_price <= window_prices.min():
-                    return TradingSignalEnum.BUY
-                else:
-                    return TradingSignalEnum.HOLD
-                
+        if positions_data.are_we_holding_positions():
+            holding_time_minutes = positions_data.get_holding_time_minutes(symbol=symbol,
+                                                                           current_time_timestamp=current_timestamp)
+            print(holding_time_minutes)
+            if holding_time_minutes >= holding_time:
+                return TradingSignalEnum.SELL
+        else:
+            if current_price <= min_price:
+                return TradingSignalEnum.BUY
+
+        return TradingSignalEnum.HOLD         
         
 
     def generate_signal_z_score(self, market_data: MarketData, positions_data: Positions) -> TradingSignal:

@@ -7,24 +7,27 @@ from trading_rules.position_data import Positions
 from trading_rules.signals import TradingSignalEnum
 
 
-def perform_mean_reversal_backtest(symbol:str, 
+def perform_mean_reversal_backtest(symbol:str,
                                    rule: MeanReversal,
-                                   market_data: MarketData, 
+                                   market_data: MarketData,
                                    positions: Positions):
 
-    index = market_data.df.index
+    all_timestamps = market_data.df.index
+    lookback_delta = pd.Timedelta(days=rule.lookback_window)
 
-    for i in range(len(index)):
+    for right_idx in range(len(all_timestamps)):
 
-        right_ts = index[i]
-        left_ts = right_ts - pd.Timedelta(days=rule.lookback_window)
+        right_ts = all_timestamps[right_idx]
+        # Compute the start of the lookback window in calendar time, regardless
+        # of how many rows that covers (works for daily, hourly, minute bars, etc.)
+        left_ts = right_ts - lookback_delta
 
-        # Skip until we have a full window worth of history
-        if index[0] > left_ts:
+        # Skip this bar if we don't yet have a full lookback_window of days
+        if (right_ts - all_timestamps[0]) < lookback_delta:
             continue
 
-        start_ts = index.searchsorted(left_ts)
-        current_window = market_data.df.iloc[start_ts: i + 1]
+        current_window = market_data.df.loc[left_ts: right_ts]
+
         current_window_data = MarketData(current_window)
 
         signal = rule.generate_signal_buy_at_entry_sell_after_time(symbol=symbol,
@@ -51,5 +54,6 @@ def perform_mean_reversal_backtest(symbol:str,
                                         quantity=quantity,
                                         current_price=current_window_data.get_latest_price(),
                                         timestamp=current_window_data.get_latest_timestamp())
+
 
     return positions

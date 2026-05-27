@@ -98,13 +98,16 @@ class PortfolioPerformance:
             deviation of returns is zero.
         """
 
-        if SIMPLE_RETURNS not in returns_df:
-            raise IndexError(f"{SIMPLE_RETURNS} not present in returns_df")
-        
+        if TOTAL_VALUE not in returns_df:
+            raise IndexError(f"{TOTAL_VALUE} not present in returns_df")
 
-        daily_returns: pd.Series = returns_df[SIMPLE_RETURNS].dropna()
+        # Resample portfolio value to daily (end-of-day mark) so that Sharpe is
+        # computed on daily returns regardless of the underlying bar frequency.
+        # The paper computes Sharpe from daily returns annualized with sqrt(252).
+        daily_value = returns_df[TOTAL_VALUE].resample("1D").last().dropna()
+        daily_returns = daily_value.pct_change().dropna()
 
-        # Convert annualized risk-free rate to a per-period rate.
+        # Convert annualized risk-free rate to a per-period (daily) rate.
         period_risk_free = (1 + risk_free_rate) ** (1 / periods_per_year) - 1
 
         excess_returns = daily_returns - period_risk_free
