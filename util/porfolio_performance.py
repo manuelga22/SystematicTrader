@@ -77,12 +77,8 @@ class PortfolioPerformance:
 
         return trading_history_df
     
-    @ staticmethod
-    def get_annualized_sharpe_ratio(
-        returns_df,
-        risk_free_rate: float = 0.0,
-        periods_per_year: int = 252,
-    ) -> float:
+    @staticmethod
+    def get_annualized_sharpe_ratio(returns_df, risk_free_rate: float = 0.0, periods_per_year: int = 252) -> float:
         """Calculate the annualized Sharpe ratio for the portfolio.
 
         Args:
@@ -121,10 +117,18 @@ class PortfolioPerformance:
         return sharpe
 
 
-
     @staticmethod
-    def get_annualized_cumulative_return(returns_df: pd.DataFrame):
-        pass
+    def get_annualized_cumulative_return(returns_df: pd.DataFrame) -> float:
+
+        initial_amount = returns_df[TOTAL_VALUE].iloc[0]
+        final_amount = returns_df[TOTAL_VALUE].iloc[-1]
+
+        years = (
+            returns_df.index[-1] - returns_df.index[0]
+        ).total_seconds() / (365.25 * 24 * 3600)
+
+        return (final_amount / initial_amount) ** (1 / years) - 1
+
     
     def _find_newest_transaction_before(self, trades: list[PositionData], ts: pd.Timestamp):
         
