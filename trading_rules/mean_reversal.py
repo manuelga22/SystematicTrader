@@ -13,46 +13,18 @@ class HoldingTimeEnumMinutes:
 
 
 class MeanReversal(TradingRule):
-    DESCRIPTION = """Z-Score based Mean Reversion trading rule.
+    DESCRIPTION = """..."""
     
-    Trading rule that identifies mean reversion opportunities using z-scores to measure 
-    price deviations from the statistical mean. A z-score measures how many standard deviations 
-    the current price is from the mean:
-    
-        z-score = (current_price - mean) / standard_deviation
-    
-    Entry Signals:
-    - BUY when z-score <= entry_z_threshold_buy (price is significantly below mean)
-    - SELL when z-score >= entry_z_threshold_sell (price is significantly above mean)
-    
-    Exit strategy is handled by a separate exit rule.
-    
-    Parameters:
-    - lookback_window: Number of periods for mean and std calculation
-    - entry_z_threshold_buy: Z-score level below which to generate BUY signal (typically negative, e.g., -2.0)
-    - entry_z_threshold_sell: Z-score level above which to generate SELL signal (typically positive, e.g., 2.0)
-    """
-    
-    def __init__(self, lookback_window=20, entry_z_threshold_entry=2.0, exit_z_threshold=0.5):
+    def __init__(self, lookback_window: int):
         """
         Initialize the Z-Score Mean Reversion trading rule.
         
         Args:
-            lookback_window: Number of periods for mean & std deviation calculation (default: 20)
-            entry_z_threshold_buy: Z-score threshold for BUY signal (default: -2.0)
-                                  Typically negative; lower = more extreme, fewer trades
-            entry_z_threshold_sell: Z-score threshold for SELL signal (default: 2.0)
-                                   Typically positive; higher = more extreme, fewer trades
+            lookback_window: Number of bar to lookback when comparing to current value (default: 20)
         """
         self.lookback_window = lookback_window
-        self.entry_z_threshold = entry_z_threshold_entry
-        self.exit_z_threshold = exit_z_threshold
-
-    def generate_signal_buy_at_entry_sell_after_time(self,
-                                                     symbol: str,
-                                                     market_data: MarketData,
-                                                     positions_data: Positions,
-                                                     holding_time=HoldingTimeEnumMinutes.ONE_DAY) -> TradingSignal:
+    def run_with_time_based_exit(self, symbol: str, market_data: MarketData, positions_data: Positions,
+                                                 holding_time=HoldingTimeEnumMinutes.ONE_DAY) -> TradingSignal:
         """
         Generate entry signals based on X-day rolling minimum (paper strategy).
 
@@ -60,7 +32,9 @@ class MeanReversal(TradingRule):
         Exit: SELL after holding_time minutes have elapsed.
         """
         if market_data.df.empty:
-            return TradingSignalEnum.HOLD
+            raise ValueError("MARKET DATA df is empty")
+        
+        rolling_min = market_data.df.rolling(self.lookback_window)
 
         # Check we are looking at a window with at least "lookback window" days
         # worth of data.
