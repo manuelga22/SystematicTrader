@@ -8,7 +8,7 @@ def stop_loss():
 
 def time_exit(max_bars: int) -> callable:
     def rule(pos, price, data, i):
-        if  data.iloc[i]['close'] - data.iloc[pos["entry_idx"]]['close'] >= max_bars:
+        if i - pos["entry_idx"] >= max_bars:
             return True
         return False
     
