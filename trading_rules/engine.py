@@ -1,4 +1,5 @@
 import pandas as pd
+from trading_rules.fees import FeeParams, taker_fees
 
 OPEN = 'open'
 CLOSE = 'close'
@@ -21,7 +22,8 @@ def validate(data: pd.DataFrame) -> pd.DataFrame:
     
     return data
 
-def backtest(data: pd.DataFrame, entries_series: pd.Series, exits_list: list[callable], initial_cash: float):
+def backtest(data: pd.DataFrame, entries_series: pd.Series, exits_list: list[callable], 
+             initial_cash: float, fee_params: FeeParams):
     
     validate(data)
     
@@ -29,6 +31,7 @@ def backtest(data: pd.DataFrame, entries_series: pd.Series, exits_list: list[cal
     pos = None
     trades, equity = [], []
     size_frac = 1.0 # Use all the cash available
+    
 
     for i in range(len(data)):
         price = data.iloc[i]['close']
@@ -37,15 +40,25 @@ def backtest(data: pd.DataFrame, entries_series: pd.Series, exits_list: list[cal
         if pos is not None:
             # Check for selling signals, if any of them return True, SELL!!!
             if any(rule(pos, price, data, i) for rule in exits_list):
-                cash += pos["qty"] * price
-                trades.append({**pos, "exit_price": price, "exit_idx": i})
+                exit_fee = taker_fees(pos["qty"], price, fee_params)
+                cash += pos["qty"] * price - exit_fee
+                trades.append({**pos, "exit_price": price, "exit_idx": i, "exit_fee": exit_fee})
                 pos = None
         
         # Check for buying signals, if this bar evaluates to TRUE, BUY!!!
         elif entries_series.iloc[i]:
-            qty = (cash * size_frac) / price
-            cash -= qty * price
-            pos = {"entry_price": price, "qty": qty, "entry_idx": i}
+            budget = cash * size_frac
+            qty = budget / price
+            entry_fee = taker_fees(qty, price, fee_params)
+            if entry_fee > 0:
+                # Shrink the order so shares + fee fit inside the budget.
+                # The fee is estimated on the pre-shrink qty, so this slightly
+                # overcharges and never overspends.
+                qty = (budget - entry_fee) / price
+                entry_fee = taker_fees(qty, price, fee_params)
+            if qty > 0:
+                cash -= qty * price + entry_fee
+                pos = {"entry_price": price, "qty": qty, "entry_idx": i, "entry_fee": entry_fee}
 
         equity.append(cash + (pos["qty"] * price if pos else 0))
 

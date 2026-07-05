@@ -1,0 +1,4 @@
+websockets>=12
+python-dotenv>=1.0
+requests>=2.31
+py-clob-client>=0.19  # live trading only; paper mode runs without it
