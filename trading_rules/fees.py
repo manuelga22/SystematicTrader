@@ -58,7 +58,7 @@ def taker_fees(shares: float, price: float, fee_params: FeeParams) -> float:
         
         fee = rate * shares * price
 
-    fee = max(fee, fee_params.min_fee)
+    fee = max(fee, fee_params.min_fee_dollars)
     return fee * (1 - fee_params.rebate_share)
 
 
