@@ -37,7 +37,7 @@ def backtest(data: pd.DataFrame, entries_series: pd.Series, exits_list: list[cal
     
 
     for i in range(len(data)):
-        price = data.iloc[i]['close']
+        price = data.iloc[i][CLOSE]
 
         # Check if we are holding securities
         if pos is not None:
