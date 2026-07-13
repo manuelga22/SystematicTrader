@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 import os
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
+from util.log_service import LogService
 
 from bot import Bot, EntryRule, ExitRule
 from polymarket_account import Position
@@ -32,8 +32,9 @@ from price_book import PriceBook
 ROOT = Path(__file__).resolve().parents[1]
 CLOB_HOST = "https://clob.polymarket.com"
 POLYGON_CHAIN_ID = 137
+LOGGER_NAME = "TRADING_BOT"
 
-log = logging.getLogger("main")
+log = LogService(name=LOGGER_NAME, log_dir="logs")
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,22 @@ class Params:
     entry_z: float = 2.0       # enter when z-score < -entry_z
     exit_z: float = 0.5        # exit when z-score >= -exit_z (reverted)
     stop_loss_pct: float = 0.15  # exit if price drops this far below entry
+
+    def to_dict(self) -> dict:
+        return {
+            "asset_ids": self.asset_ids,
+            "bar_seconds": self.bar_seconds,
+            "max_bars": self.max_bars,
+            "order_size_usd": self.order_size_usd,
+            "cooldown_s": self.cooldown_s,
+            "starting_cash": self.starting_cash,
+            "slippage_bps": self.slippage_bps,
+            "lookback": self.lookback,
+            "entry_z": self.entry_z,
+            "exit_z": self.exit_z,
+            "stop_loss_pct": self.stop_loss_pct,
+        }
+        
 
 
 # -- strategies ----------------------------------------------------------------
@@ -153,9 +170,8 @@ def build_live(params: Params) -> Bot:
     )
 
 
-# -- entry point -------------------------------------------------------------
+def main() -> None:
 
-def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Polymarket trading bot")
     parser.add_argument("--mode", choices=["paper", "live"], default="paper")
     parser.add_argument(
@@ -166,32 +182,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bar-seconds", type=int, default=Params.bar_seconds)
     parser.add_argument("--order-size", type=float, default=Params.order_size_usd)
     parser.add_argument("-v", "--verbose", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
 
-
-def main() -> None:
-    args = parse_args()
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-    )
     load_dotenv(ROOT / "polymarket.env")
+
+    log.info("Starting Trading Bot!")
 
     params = Params(
         asset_ids=[a.strip() for a in args.assets.split(",") if a.strip()],
         bar_seconds=args.bar_seconds,
         order_size_usd=args.order_size,
     )
+    
     if not params.asset_ids:
         raise SystemExit("no asset ids given")
-
+    
+    log.info(f"Trading bot initialized with the following parameters {params.to_dict()}")
     log.info("mode=%s assets=%s", args.mode, [a[:16] for a in params.asset_ids])
+    
     bot = build_live(params) if args.mode == "live" else build_paper(params)
 
     try:
         asyncio.run(bot.run())
     except KeyboardInterrupt:
-        log.info("stopped")
+        log.info("Trading bot has been stopped")
 
 
 if __name__ == "__main__":

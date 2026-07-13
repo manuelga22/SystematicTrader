@@ -4,7 +4,9 @@
 
 SYSTEMATICTRADER is a repository that contains 3 mini projects: 
     1. trading_rules, which is a backtesting library written in python.
-    2. polymarket_bot, which is a trading bot built for polymarket and also written in python.
+    2  data_clients, which is a library of clients that we can use to get market data.
+    3. polymarket_bot, which is a trading bot built for polymarket and also written in python.
+
 
  * **Stack**: Python3.11, jupyter notebooks.
 

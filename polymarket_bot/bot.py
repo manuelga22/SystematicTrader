@@ -17,12 +17,15 @@ import asyncio
 import logging
 import time
 from typing import Callable, Protocol
+from util.log_service import LogService
 
 from polymarket_account import Position
 from polymarket_socket import PolymarketSocket
 from price_book import Bar, PriceBook
 
-log = logging.getLogger(__name__)
+LOGGER_NAME = "BOT"
+
+log = LogService(name=LOGGER_NAME)
 
 # entry(book, asset_id) -> True to open a position
 EntryRule = Callable[[PriceBook, str], bool]
