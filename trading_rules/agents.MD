@@ -1,6 +1,7 @@
 # trading_rules Code Rules
 
-These rules apply to all code under `trading_rules`. They supplement the root `AGENTS.md` file.
+These rules apply to all code under `trading_rules`. They supplement the root `AGENTS.md` file. 
+**Before reading this, you MUST READ THE ROOT LEVEL AGENTS.md file**
 
 ## Module Overview
 
@@ -11,24 +12,15 @@ realistic fills (slippage) and taker fees.
 
 ## Files
 
-- **`engine.py`** — The backtest engine. `validate()` checks that the input
-  DataFrame has numeric `open/high/low/close/volume` columns. `backtest()` runs the
-  bar-by-bar simulation: it computes ATR, buys with all available cash when the
-  entry signal fires (shrinking the order so shares + fee fit the budget), sells
-  when any exit rule returns True, applies slippage-adjusted fill prices and taker
-  fees on both sides, and returns `{"equity": pd.Series, "trades": list[dict]}`.
-  Holds at most one position at a time; longs only.
+- **`engine.py`** — This file is the heart of the engine. It has a single backtest() function that returns
+  the value of the equity and all the trades through time, while the strategy was running.
 
-- **`entries.py`** — Entry signal generators. Each takes an OHLCV DataFrame and
-  returns a boolean `pd.Series` aligned to it (True = buy on that bar).
-  `mean_reversion(data, window)` fires when close touches the prior rolling-window
-  low; `mean_reversion_z_score(data, window, z_score)` fires when the close's
-  rolling z-score drops below a threshold.
+- **`entries.py`** — Entry signal generators. Each takes an DataFrame with price information
+  (high, low, close, open) and returns a boolean `pd.Series` aligned to it (True = buy on that bar).
 
 - **`exits.py`** — Exit rule factories. Each returns a callable with signature
   `rule(pos, price, data, i) -> bool` that the engine evaluates on every bar while
-  holding a position. `time_exit(max_bars)` closes after N bars in the trade;
-  `take_profit()` and `stop_loss()` are unimplemented stubs.
+  holding a position. 
 
 - **`fills.py`** — Order execution pricing. `SlippageParams` holds a fixed
   spread (bps) plus an ATR-proportional volatility component. `OrderFiller`
@@ -39,9 +31,7 @@ realistic fills (slippage) and taker fees.
 
 - **`fees.py`** — Taker fee models. `FeeParams` selects a `FeeModel` (FREE, BPS,
   or POLYMARKET) with a rate in basis points, an optional minimum fee, and a
-  rebate share. `taker_fees(shares, price, params)` returns the dollar fee for a
-  fill: notional × rate for BPS, or Polymarket's `shares · rate · p · (1-p)`
-  formula (rounded to 5 decimals) for prediction-market prices in [0, 1].
+  rebate share. 
 
 - **`metrics.py`** — Post-backtest performance analysis. The `Metrics` class
   wraps the engine's `trades` and `equity` outputs and computes per-bar
@@ -54,9 +44,6 @@ realistic fills (slippage) and taker fees.
 
 - **`timeframes.py`** — `TimeframesEnum`: canonical bar-interval strings
   (`1Min` through `1M`) for use with data providers and resampling.
-
-- **`__init__.py`** — Appends `trading_rules/` to `sys.path` (a workaround for
-  flat intra-package imports; no public API is re-exported here).
 
 - **`README.md`** — ⚠️ Outdated. Describes a previous OOP design
   (`TradingRule` ABC, `MarketData`, `Positions`, signal enums) that has been
