@@ -86,8 +86,8 @@ class PolymarketAPIClient:
         except Exception as exc:
             raise PolymarketClientError(f"Failed to fetch market {slug!r}: {exc}") from exc
 
-    def get_price_history_by_outcome(self, market_slug: str, desired_outcome: str = "Yes",
-                                     start: datetime = None, end: datetime = None,
+    def get_price_history_by_outcome(self, market_slug: str, outcome: str = "Yes",
+                                     start_ts: datetime = None, end_ts: datetime = None,
                                      fidelity: int = 1, interval: TickDataIntervalEnum = TickDataIntervalEnum.ONE_DAY) -> pd.DataFrame:
         """Resolve an outcome token for a market slug and fetch its history."""
         market = self.get_market_by_slug(market_slug)

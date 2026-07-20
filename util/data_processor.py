@@ -1,7 +1,8 @@
 import pandas as pd
+from enum import Enum
 
 
-class TickDataIntervalEnum:
+class TickDataIntervalEnum(Enum):
     """Enumeration of tick data intervals for Polymarket price history."""
     ONE_MINUTE = "1m"
     FIVE_MINUTES = "5m"

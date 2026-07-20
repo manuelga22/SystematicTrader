@@ -1,7 +1,9 @@
 import pandas as pd
-
+from util.rule_registry import entry_rule
 CLOSE = 'close'
 
+
+@entry_rule
 def mean_reversion(data: pd.DataFrame, window: int) -> pd.Series:
 
     if data.empty:
@@ -11,6 +13,7 @@ def mean_reversion(data: pd.DataFrame, window: int) -> pd.Series:
     return (data[CLOSE] <= rolling_min).fillna(False)
     
 
+@entry_rule
 def mean_reversion_z_score(data: pd.DataFrame, window: int, z_score: float):
 
     
